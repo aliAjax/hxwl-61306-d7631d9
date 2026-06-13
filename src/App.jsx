@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -152,7 +152,7 @@ function uid() {
 }
 
 function withIds(items) {
-  return items.map((item) => ({ id: uid(), timeline: item.timeline || [{ status: item.status, at: today, by: '系统' }], ...item }));
+  return items.map((item) => ({ id: uid(), timeline: item.timeline || [{ status: item.status, at: today, by: '系统', changedAt: new Date().toISOString() }], ...item }));
 }
 
 function loadRecords() {
@@ -209,6 +209,47 @@ function statusClass(status) {
   return ['status-a', 'status-b', 'status-c', 'status-d'][index] || 'status-a';
 }
 
+const WORKBENCH_ZONES = [
+  { key: 'urgent', label: '优先处理', status: '待阅片', icon: Zap, color: '#ef4444' },
+  { key: 'reading', label: '正在阅片', status: '阅片中', icon: Eye, color: '#7c3aed' },
+  { key: 'review', label: '等待复核', status: '待复核', icon: ShieldCheck, color: '#f59e0b' },
+  { key: 'done', label: '已完成', status: '已完成', icon: CircleCheckBig, color: '#10b981' },
+];
+
+function waitDuration(item) {
+  const now = Date.now();
+  const timeline = item.timeline || [];
+  const lastEntry = timeline[timeline.length - 1];
+  let startMs;
+  if (lastEntry?.changedAt) {
+    startMs = new Date(lastEntry.changedAt).getTime();
+  } else if (item.sentAt) {
+    startMs = new Date(item.sentAt).getTime();
+  } else {
+    startMs = now;
+  }
+  const diffMs = Math.max(0, now - startMs);
+  const totalMins = Math.floor(diffMs / 60000);
+  const days = Math.floor(totalMins / 1440);
+  const hours = Math.floor((totalMins % 1440) / 60);
+  const mins = totalMins % 60;
+  if (days > 0) return `${days}天${hours}时`;
+  if (hours > 0) return `${hours}时${mins}分`;
+  return `${mins}分`;
+}
+
+function nextStatus(current) {
+  const idx = appConfig.statuses.indexOf(current);
+  if (idx < 0 || idx >= appConfig.statuses.length - 1) return null;
+  return appConfig.statuses[idx + 1];
+}
+
+function prevStatus(current) {
+  const idx = appConfig.statuses.indexOf(current);
+  if (idx <= 0) return null;
+  return appConfig.statuses[idx - 1];
+}
+
 function App() {
   const [records, setRecords] = useState(loadRecords);
   const [form, setForm] = useState(appConfig.defaultValues);
@@ -217,6 +258,12 @@ function App() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRaw, setBatchRaw] = useState('');
   const [batchParsed, setBatchParsed] = useState([]);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const BATCH_FIELDS = [
     { key: 'caseNo', label: '病例号', required: true },
@@ -306,7 +353,7 @@ function App() {
       summary: r.summary || '',
       status: appConfig.primaryStatus,
       createdAt: now,
-      timeline: [{ status: appConfig.primaryStatus, at: today, by: '批量导入' }],
+      timeline: [{ status: appConfig.primaryStatus, at: today, by: '批量导入', changedAt: new Date().toISOString() }],
     }));
 
     persist([...newRecords, ...records]);
@@ -333,7 +380,7 @@ function App() {
       ...form,
       status: form.status || appConfig.primaryStatus,
       createdAt: new Date().toISOString(),
-      timeline: [{ status: form.status || appConfig.primaryStatus, at: today, by: '录入' }]
+      timeline: [{ status: form.status || appConfig.primaryStatus, at: today, by: '录入', changedAt: new Date().toISOString() }]
     };
 
     if (appConfig.conflict === 'date-slot' && records.some((item) => item.date === nextRecord.date && item.slot === nextRecord.slot)) {
@@ -354,10 +401,11 @@ function App() {
   }
 
   function updateStatus(id, status) {
+    const now = new Date().toISOString();
     const next = records.map((item) => item.id === id ? {
       ...item,
       status,
-      timeline: [...(item.timeline || []), { status, at: today, by: '操作员' }]
+      timeline: [...(item.timeline || []), { status, at: today, by: '操作员', changedAt: now }]
     } : item);
     persist(next);
     if (selected?.id === id) setSelected(next.find((item) => item.id === id));
@@ -370,7 +418,7 @@ function App() {
   }
 
   function duplicateRecord(item) {
-    const copied = { ...item, id: uid(), status: appConfig.primaryStatus, timeline: [{ status: appConfig.primaryStatus, at: today, by: '复制' }] };
+    const copied = { ...item, id: uid(), status: appConfig.primaryStatus, timeline: [{ status: appConfig.primaryStatus, at: today, by: '复制', changedAt: new Date().toISOString() }] };
     persist([copied, ...records]);
     setSelected(copied);
   }
@@ -425,6 +473,24 @@ function App() {
     }, {});
   }, [records]);
 
+  const workbenchGroups = useMemo(() => {
+    void tick;
+    return WORKBENCH_ZONES.map((zone) => ({
+      ...zone,
+      items: records
+        .filter((item) => item.status === zone.status)
+        .sort((a, b) => {
+          if (zone.status === '待阅片') {
+            const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+            if (rankDiff !== 0) return rankDiff;
+          }
+          const aTime = a.sentAt || a.createdAt || '';
+          const bTime = b.sentAt || b.createdAt || '';
+          return String(aTime).localeCompare(String(bTime));
+        }),
+    }));
+  }, [records, tick]);
+
   return (
     <main className="shell" style={{ '--accent': appConfig.accent }}>
       <section className="hero">
@@ -446,6 +512,59 @@ function App() {
             <strong>{metric.value}</strong>
           </article>
         ))}
+      </section>
+
+      <section className="workbench">
+        <div className="workbench-header">
+          <div className="eyebrow"><Microscope size={18} />今日阅片工作台</div>
+        </div>
+        <div className="workbench-columns">
+          {workbenchGroups.map((zone) => {
+            const ZoneIcon = zone.icon;
+            return (
+              <div className="workbench-column" key={zone.key}>
+                <div className="workbench-column-header" style={{ '--zone-color': zone.color }}>
+                  <ZoneIcon size={16} />
+                  <span>{zone.label}</span>
+                  <strong>{zone.items.length}</strong>
+                </div>
+                <div className="workbench-cards">
+                  {zone.items.length === 0 && (
+                    <p className="workbench-empty">暂无病例</p>
+                  )}
+                  {zone.items.map((item) => (
+                    <div className="workbench-card" key={item.id} onClick={() => setSelected(item)}>
+                      <div className="workbench-card-top">
+                        <h3>{item.caseNo}</h3>
+                        <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                      </div>
+                      <div className="workbench-card-meta">
+                        <span>{item.sampleType}</span>
+                        <span>{item.doctor}</span>
+                      </div>
+                      <div className="workbench-card-wait">
+                        <Clock size={13} />
+                        <span>{waitDuration(item)}</span>
+                      </div>
+                      <div className="workbench-card-actions" onClick={(e) => e.stopPropagation()}>
+                        {prevStatus(item.status) && (
+                          <button className="wb-btn wb-btn-prev" type="button" onClick={() => updateStatus(item.id, prevStatus(item.status))}>
+                            ← {prevStatus(item.status)}
+                          </button>
+                        )}
+                        {nextStatus(item.status) && (
+                          <button className="wb-btn wb-btn-next" type="button" style={{ '--zone-color': zone.color }} onClick={() => updateStatus(item.id, nextStatus(item.status))}>
+                            {nextStatus(item.status)} →
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="workspace">
