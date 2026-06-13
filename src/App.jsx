@@ -707,41 +707,6 @@ function App() {
     return Array.from(doctors).sort();
   }, [records]);
 
-  const tatStats = useMemo(() => {
-    void tick;
-    let overdue = 0;
-    let warning = 0;
-    let normal = 0;
-    let unknown = 0;
-    const waitTimes = [];
-
-    records.forEach((item) => {
-      const tat = calcTatInfo(item);
-      if (tat.hasStartTime) {
-        waitTimes.push(tat.waitedMinutes);
-      }
-      switch (tat.status) {
-        case TAT_STATUS.OVERDUE:
-          overdue++;
-          break;
-        case TAT_STATUS.WARNING:
-          warning++;
-          break;
-        case TAT_STATUS.NORMAL:
-          normal++;
-          break;
-        default:
-          unknown++;
-      }
-    });
-
-    const avgWait = waitTimes.length
-      ? Math.floor(waitTimes.reduce((s, v) => s + v, 0) / waitTimes.length)
-      : 0;
-
-    return { overdue, warning, normal, unknown, total: records.length, avgWait };
-  }, [records, tick]);
-
   const tatFilteredRecords = useMemo(() => {
     void tick;
     return records
@@ -767,6 +732,41 @@ function App() {
         return (tatA.waitedMinutes || 0) - (tatB.waitedMinutes || 0);
       });
   }, [records, tatFilters, tick]);
+
+  const tatStats = useMemo(() => {
+    void tick;
+    let overdue = 0;
+    let warning = 0;
+    let normal = 0;
+    let unknown = 0;
+    const waitTimes = [];
+
+    tatFilteredRecords.forEach((item) => {
+      const tat = calcTatInfo(item);
+      if (tat.hasStartTime) {
+        waitTimes.push(tat.waitedMinutes);
+      }
+      switch (tat.status) {
+        case TAT_STATUS.OVERDUE:
+          overdue++;
+          break;
+        case TAT_STATUS.WARNING:
+          warning++;
+          break;
+        case TAT_STATUS.NORMAL:
+          normal++;
+          break;
+        default:
+          unknown++;
+      }
+    });
+
+    const avgWait = waitTimes.length
+      ? Math.floor(waitTimes.reduce((s, v) => s + v, 0) / waitTimes.length)
+      : 0;
+
+    return { overdue, warning, normal, unknown, total: tatFilteredRecords.length, avgWait };
+  }, [tatFilteredRecords, tick]);
 
   return (
     <main className="shell" style={{ '--accent': appConfig.accent }}>
