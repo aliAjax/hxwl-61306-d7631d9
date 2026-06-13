@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -245,6 +245,8 @@ function prevStatus(current) {
   return appConfig.statuses[idx - 1];
 }
 
+const REVIEW_CONCLUSIONS = ['通过', '修改后通过', '退回重审'];
+
 function App() {
   const [records, setRecords] = useState(loadRecords);
   const [form, setForm] = useState(appConfig.defaultValues);
@@ -254,11 +256,94 @@ function App() {
   const [batchRaw, setBatchRaw] = useState('');
   const [batchParsed, setBatchParsed] = useState([]);
   const [tick, setTick] = useState(0);
+  const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
+  const [reviewEditing, setReviewEditing] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (selected) {
+      const latestReview = (selected.reviews || []).slice(-1)[0];
+      if (latestReview && !reviewEditing) {
+        setReviewForm({
+          reviewDoctor: latestReview.reviewDoctor || '',
+          conclusion: latestReview.conclusion || '',
+          remark: latestReview.remark || ''
+        });
+      } else if (!latestReview) {
+        setReviewForm({ reviewDoctor: '', conclusion: '', remark: '' });
+      }
+    } else {
+      setReviewForm({ reviewDoctor: '', conclusion: '', remark: '' });
+      setReviewEditing(false);
+    }
+  }, [selected]);
+
+  function handleReviewSubmit(e) {
+    e.preventDefault();
+    if (!selected || selected.status !== '待复核') return;
+    if (!reviewForm.reviewDoctor.trim() || !reviewForm.conclusion) return;
+
+    const now = new Date().toISOString();
+    const reviewRecord = {
+      id: uid(),
+      reviewDoctor: reviewForm.reviewDoctor.trim(),
+      conclusion: reviewForm.conclusion,
+      remark: reviewForm.remark.trim(),
+      reviewedAt: now
+    };
+
+    const next = records.map((item) => {
+      if (item.id === selected.id) {
+        const newReviews = [...(item.reviews || []), reviewRecord];
+        return {
+          ...item,
+          reviews: newReviews,
+          timeline: [...(item.timeline || []), {
+            status: '复核意见',
+            at: today,
+            by: reviewForm.reviewDoctor.trim(),
+            changedAt: now,
+            reviewId: reviewRecord.id
+          }]
+        };
+      }
+      return item;
+    });
+
+    persist(next);
+    setSelected(next.find((item) => item.id === selected.id));
+    setReviewEditing(false);
+  }
+
+  function handleReviewCancel() {
+    setReviewEditing(false);
+    const latestReview = (selected?.reviews || []).slice(-1)[0];
+    if (latestReview) {
+      setReviewForm({
+        reviewDoctor: latestReview.reviewDoctor || '',
+        conclusion: latestReview.conclusion || '',
+        remark: latestReview.remark || ''
+      });
+    } else {
+      setReviewForm({ reviewDoctor: '', conclusion: '', remark: '' });
+    }
+  }
+
+  function handleReviewEdit() {
+    const latestReview = (selected?.reviews || []).slice(-1)[0];
+    if (latestReview) {
+      setReviewForm({
+        reviewDoctor: latestReview.reviewDoctor || '',
+        conclusion: latestReview.conclusion || '',
+        remark: latestReview.remark || ''
+      });
+    }
+    setReviewEditing(true);
+  }
 
   const BATCH_FIELDS = [
     { key: 'caseNo', label: '病例号', required: true },
@@ -536,6 +621,12 @@ function App() {
                       <div className="workbench-card-meta">
                         <span>{item.sampleType}</span>
                         <span>{item.doctor}</span>
+                        {zone.key === 'review' && (item.reviews || []).length > 0 && (
+                          <span className="wb-review-badge">已复核</span>
+                        )}
+                        {zone.key === 'review' && !(item.reviews || []).length && (
+                          <span className="wb-review-badge wb-review-pending">待录入</span>
+                        )}
                       </div>
                       <div className="workbench-card-wait">
                         <Clock size={13} />
@@ -620,6 +711,12 @@ function App() {
                   <span className={'status ' + statusClass(item.status)}>{item.status}</span>
                 </div>
                 <p className="record-detail">{item.summary}</p>
+                {item.status === '待复核' && (item.reviews || []).length > 0 && (
+                  <div className="record-review-hint">
+                    <ShieldCheck size={13} />
+                    <span>已复核（{(item.reviews || []).slice(-1)[0]?.conclusion}）</span>
+                  </div>
+                )}
                 {(item.conflict || hasOverlap(item, records)) && <div className="warning"><AlertTriangle size={15} />发现冲突</div>}
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
                   {appConfig.statuses.map((status) => (
@@ -677,10 +774,128 @@ function App() {
                   {selected.temps.map((value, index) => <i key={index} style={{ height: Math.max(10, 56 + Number(value) * 8) }} title={String(value)} />)}
                 </div>
               )}
+
+              {(selected.status === '待复核' || (selected.reviews || []).length > 0) && (
+                <div className="review-section">
+                  <div className="review-header">
+                    <div className="panel-title" style={{ margin: 0 }}>
+                      <ShieldCheck size={16} />
+                      <h2>复核意见</h2>
+                      {selected.status !== '待复核' && <span className="review-readonly-tag">只读</span>}
+                    </div>
+                    {(selected.status === '待复核' && selected.reviews?.length > 0 && !reviewEditing) && (
+                      <button type="button" className="review-edit-btn" onClick={handleReviewEdit}>
+                        <Edit size={14} />编辑
+                      </button>
+                    )}
+                  </div>
+
+                  {(() => {
+                    const latestReview = (selected.reviews || []).slice(-1)[0];
+
+                    if (!latestReview && !reviewEditing) {
+                      if (selected.status !== '待复核') return null;
+                      return (
+                        <div className="review-empty">
+                          <Stethoscope size={32} />
+                          <p>暂无复核意见</p>
+                          <button type="button" className="primary" onClick={handleReviewEdit}>
+                            <Plus size={14} />录入复核意见
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    if (reviewEditing && selected.status === '待复核') {
+                      return (
+                        <form className="review-form" onSubmit={handleReviewSubmit}>
+                          <label>
+                            <span><UserCheck size={13} />复核医生</span>
+                            <input
+                              type="text"
+                              value={reviewForm.reviewDoctor}
+                              onChange={(e) => setReviewForm({ ...reviewForm, reviewDoctor: e.target.value })}
+                              placeholder="请输入复核医生姓名"
+                              required
+                            />
+                          </label>
+                          <label>
+                            <span><FileCheck size={13} />复核结论</span>
+                            <select
+                              value={reviewForm.conclusion}
+                              onChange={(e) => setReviewForm({ ...reviewForm, conclusion: e.target.value })}
+                              required
+                            >
+                              <option value="">请选择结论</option>
+                              {REVIEW_CONCLUSIONS.map((c) => <option key={c}>{c}</option>)}
+                            </select>
+                          </label>
+                          <label className="wide">
+                            <span><ClipboardList size={13} />补充说明</span>
+                            <textarea
+                              value={reviewForm.remark}
+                              onChange={(e) => setReviewForm({ ...reviewForm, remark: e.target.value })}
+                              placeholder="请输入补充说明（选填）"
+                              rows={3}
+                            />
+                          </label>
+                          <div className="review-form-actions">
+                            <button type="submit" className="primary" disabled={!reviewForm.reviewDoctor.trim() || !reviewForm.conclusion}>
+                              <Save size={14} />提交
+                            </button>
+                            <button type="button" className="secondary" onClick={handleReviewCancel}>
+                              <X size={14} />取消
+                            </button>
+                          </div>
+                        </form>
+                      );
+                    }
+
+                    return (
+                      <div className="review-display">
+                        <div className="review-item">
+                          <div className="review-item-header">
+                            <span className={`review-conclusion conclusion-${latestReview.conclusion}`}>
+                              {latestReview.conclusion}
+                            </span>
+                            <span className="review-date">
+                              {new Date(latestReview.reviewedAt).toLocaleString('zh-CN')}
+                            </span>
+                          </div>
+                          <div className="review-item-doctor">
+                            <UserCheck size={14} />
+                            <span>复核医生：{latestReview.reviewDoctor}</span>
+                          </div>
+                          {latestReview.remark && (
+                            <div className="review-item-remark">
+                              <ClipboardList size={14} />
+                              <span>{latestReview.remark}</span>
+                            </div>
+                          )}
+                        </div>
+                        {(selected.reviews || []).length > 1 && (
+                          <div className="review-history-hint">
+                            共 {(selected.reviews || []).length} 条复核记录，当前展示最近一条
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               <div className="timeline">
-                {(selected.timeline || []).map((step, index) => (
-                  <span key={index}>{step.at} · {step.status} · {step.by}</span>
-                ))}
+                {(selected.timeline || []).map((step, index) => {
+                  const isReview = step.status === '复核意见';
+                  const reviewForStep = isReview
+                    ? (selected.reviews || []).find((r) => r.id === step.reviewId)
+                    : null;
+                  return (
+                    <span key={index} className={isReview ? 'timeline-review' : ''}>
+                      {step.at} · {step.status}{isReview && reviewForStep ? `（${reviewForStep.conclusion}）` : ''} · {step.by}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           ) : (
