@@ -244,11 +244,144 @@ textarea { min-height: 76px; resize: vertical; }
   background: var(--accent);
 }
 
+.form-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 800;
+  flex: 1;
+}
+
+.secondary:disabled,
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.batch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 23, 42, 0.45);
+  display: grid;
+  place-content: center;
+  padding: 24px;
+}
+
+.batch-modal {
+  background: #ffffff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+  width: min(640px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e4e7ec;
+}
+
+.batch-close {
+  border: 0;
+  background: transparent;
+  color: #667085;
+  padding: 4px;
+  border-radius: 4px;
+  display: grid;
+  place-content: center;
+}
+
+.batch-close:hover {
+  background: #f2f4f7;
+  color: #101828;
+}
+
+.batch-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.batch-textarea {
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 120px;
+}
+
+.batch-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.batch-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #344054;
+}
+
+.batch-summary strong {
+  color: var(--accent);
+}
+
+.batch-list {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e4e7ec;
+}
+
+.batch-actions .primary {
+  flex: 1;
+}
+
+.batch-actions .secondary {
+  flex: 0;
+  padding: 12px 20px;
+}
+
 @media (max-width: 980px) {
   .shell { padding: 16px; }
   .hero, .workspace, .insights { grid-template-columns: 1fr; display: grid; }
   .metrics { grid-template-columns: 1fr; }
   .port-card { min-height: 110px; border-left: 0; border-top: 4px solid var(--accent); }
+  .form-actions { flex-direction: column; }
+  .batch-modal { width: 100%; }
 }
 
 @media (max-width: 620px) {

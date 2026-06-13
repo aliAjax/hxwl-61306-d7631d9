@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -214,6 +214,99 @@ function App() {
   const [form, setForm] = useState(appConfig.defaultValues);
   const [filters, setFilters] = useState({ query: '', status: '全部' });
   const [selected, setSelected] = useState(null);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchRaw, setBatchRaw] = useState('');
+  const [batchParsed, setBatchParsed] = useState([]);
+
+  const BATCH_FIELDS = [
+    { key: 'caseNo', label: '病例号', required: true },
+    { key: 'sampleType', label: '标本类型', required: false },
+    { key: 'priority', label: '优先级', required: false },
+    { key: 'sentAt', label: '送检时间', required: false },
+    { key: 'doctor', label: '负责医生', required: false },
+    { key: 'summary', label: '备注', required: false },
+  ];
+
+  const HEADER_KEYWORDS = ['病例号', '标本类型', '优先级', '送检时间', '负责医生', '备注', 'caseno', 'sampletype', 'priority', 'sentat', 'doctor', 'summary'];
+
+  function parseBatchLines(raw) {
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+
+    let startIndex = 0;
+    const firstLine = lines[0].toLowerCase();
+    if (HEADER_KEYWORDS.some((kw) => firstLine.includes(kw))) {
+      startIndex = 1;
+    }
+
+    const existingCaseNos = new Set(records.map((r) => r.caseNo));
+    const seenCaseNos = new Set();
+    const parsed = [];
+
+    for (let i = startIndex; i < lines.length; i++) {
+      const parts = lines[i].split('\t');
+      if (parts.length < 1) continue;
+
+      const record = {};
+      BATCH_FIELDS.forEach((field, idx) => {
+        record[field.key] = (parts[idx] || '').trim();
+      });
+
+      const missing = BATCH_FIELDS
+        .filter((f) => f.required && !record[f.key])
+        .map((f) => f.label);
+
+      const duplicate = record.caseNo && (existingCaseNos.has(record.caseNo) || seenCaseNos.has(record.caseNo));
+
+      if (record.caseNo) seenCaseNos.add(record.caseNo);
+
+      parsed.push({
+        _id: uid(),
+        ...record,
+        status: appConfig.primaryStatus,
+        _missing: missing,
+        _duplicate: duplicate,
+        _invalid: missing.length > 0,
+      });
+    }
+
+    return parsed;
+  }
+
+  function handleBatchParse() {
+    const parsed = parseBatchLines(batchRaw);
+    setBatchParsed(parsed);
+  }
+
+  function handleBatchConfirm() {
+    const valid = batchParsed.filter((r) => !r._duplicate && !r._invalid);
+    if (!valid.length) return;
+
+    const now = new Date().toISOString();
+    const newRecords = valid.map((r) => ({
+      id: uid(),
+      caseNo: r.caseNo,
+      sampleType: r.sampleType || '',
+      priority: r.priority || '常规',
+      sentAt: r.sentAt || '',
+      doctor: r.doctor || '',
+      summary: r.summary || '',
+      status: appConfig.primaryStatus,
+      createdAt: now,
+      timeline: [{ status: appConfig.primaryStatus, at: today, by: '批量导入' }],
+    }));
+
+    persist([...newRecords, ...records]);
+    setBatchOpen(false);
+    setBatchRaw('');
+    setBatchParsed([]);
+  }
+
+  function handleBatchClose() {
+    setBatchOpen(false);
+    setBatchRaw('');
+    setBatchParsed([]);
+  }
 
   function persist(next) {
     setRecords(next);
@@ -370,7 +463,10 @@ function App() {
               </select>
             </label>
           </div>
-          <button className="primary" type="submit"><Plus size={18} />新增</button>
+          <div className="form-actions">
+            <button className="primary" type="submit"><Plus size={18} />新增</button>
+            <button className="secondary" type="button" onClick={() => setBatchOpen(true)}><FileUp size={18} />批量导入</button>
+          </div>
           <p className="hint">{appConfig.note}</p>
         </form>
 
@@ -465,6 +561,82 @@ function App() {
           )}
         </aside>
       </section>
+
+      {batchOpen && (
+        <div className="batch-overlay" onClick={handleBatchClose}>
+          <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <FileUp size={18} />
+                <h2>批量导入预检</h2>
+              </div>
+              <button className="batch-close" onClick={handleBatchClose}><X size={18} /></button>
+            </div>
+
+            <div className="batch-body">
+              <label className="wide">
+                <span>粘贴病例数据（Tab分隔：病例号 / 标本类型 / 优先级 / 送检时间 / 负责医生 / 备注）</span>
+                <textarea
+                  className="batch-textarea"
+                  rows={6}
+                  value={batchRaw}
+                  onChange={(e) => setBatchRaw(e.target.value)}
+                  placeholder={"P2026061302\t穿刺\t加急\t2026-06-13T09:00\t张医生\t关注切片\nP2026061303\t胃镜\t常规\t2026-06-13T10:30\t王医生\t"}
+                />
+              </label>
+              <button className="primary" type="button" onClick={handleBatchParse} disabled={!batchRaw.trim()}>
+                <ClipboardList size={16} />解析数据
+              </button>
+
+              {batchParsed.length > 0 && (
+                <div className="batch-preview">
+                  <div className="batch-summary">
+                    <span>共解析 <strong>{batchParsed.length}</strong> 条</span>
+                    {batchParsed.some((r) => r._missing.length > 0) && (
+                      <span className="warning"><AlertTriangle size={14} />{batchParsed.filter((r) => r._missing.length > 0).length} 条缺失必填字段</span>
+                    )}
+                    {batchParsed.some((r) => r._duplicate) && (
+                      <span className="warning"><AlertCircle size={14} />{batchParsed.filter((r) => r._duplicate).length} 条病例号重复</span>
+                    )}
+                    {batchParsed.filter((r) => !r._duplicate && !r._invalid).length < batchParsed.length && (
+                      <span><CheckCircle2 size={14} />{batchParsed.filter((r) => !r._duplicate && !r._invalid).length} 条可导入</span>
+                    )}
+                  </div>
+
+                  <div className="batch-list">
+                    {batchParsed.map((r) => (
+                      <article className={'record ' + (r._duplicate || r._invalid ? 'conflict' : '')} key={r._id}>
+                        <div className="record-head">
+                          <div>
+                            <h3>{r.caseNo || '(无病例号)'}</h3>
+                            <p>{[r.sampleType, r.priority, r.doctor].filter(Boolean).join(' · ') || '无详细信息'}</p>
+                          </div>
+                          <span className={'status ' + statusClass(r.status)}>{r.status}</span>
+                        </div>
+                        {r.summary && <p className="record-detail">{r.summary}</p>}
+                        {r.sentAt && <p className="record-detail">送检时间：{r.sentAt}</p>}
+                        {r._missing.length > 0 && (
+                          <div className="warning"><AlertTriangle size={14} />缺失：{r._missing.join('、')}，导入时将跳过</div>
+                        )}
+                        {r._duplicate && (
+                          <div className="warning"><AlertCircle size={14} />病例号与已有记录重复，导入时将跳过</div>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="batch-actions">
+                    <button className="primary" type="button" onClick={handleBatchConfirm} disabled={batchParsed.filter((r) => !r._duplicate && !r._invalid).length === 0}>
+                      <CheckCircle2 size={16} />确认导入（{batchParsed.filter((r) => !r._duplicate && !r._invalid).length} 条有效）
+                    </button>
+                    <button className="secondary" type="button" onClick={handleBatchClose}>取消</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
