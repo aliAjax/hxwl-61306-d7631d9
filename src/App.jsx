@@ -220,14 +220,9 @@ function waitDuration(item) {
   const now = Date.now();
   const timeline = item.timeline || [];
   const lastEntry = timeline[timeline.length - 1];
-  let startMs;
-  if (lastEntry?.changedAt) {
-    startMs = new Date(lastEntry.changedAt).getTime();
-  } else if (item.sentAt) {
-    startMs = new Date(item.sentAt).getTime();
-  } else {
-    startMs = now;
-  }
+  const startMs = [item.sentAt, item.createdAt, lastEntry?.changedAt]
+    .map((value) => new Date(value).getTime())
+    .find((value) => Number.isFinite(value)) ?? now;
   const diffMs = Math.max(0, now - startMs);
   const totalMins = Math.floor(diffMs / 60000);
   const days = Math.floor(totalMins / 1440);
