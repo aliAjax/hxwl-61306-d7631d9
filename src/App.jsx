@@ -234,6 +234,86 @@ const CRITICAL_NOTIFY_SEED = [
   }
 ];
 
+const PHRASE_LIBRARY_STORAGE = 'hxwl-61306-phrase-library';
+
+const PHRASE_LIBRARY_SEED = [
+  {
+    phrase: '镜下见肿瘤细胞呈巢状排列，核大深染，核分裂象易见，考虑为恶性肿瘤。',
+    sampleType: '手术切除',
+    useCount: 12,
+    lastUsedAt: '2026-06-12T10:30:00.000Z'
+  },
+  {
+    phrase: '胃黏膜慢性炎，伴肠上皮化生，未见异型增生，建议定期复查。',
+    sampleType: '胃镜',
+    useCount: 25,
+    lastUsedAt: '2026-06-13T14:20:00.000Z'
+  },
+  {
+    phrase: '结肠黏膜慢性炎，可见溃疡形成，伴炎性息肉，建议治疗后复查。',
+    sampleType: '肠镜',
+    useCount: 18,
+    lastUsedAt: '2026-06-11T09:15:00.000Z'
+  },
+  {
+    phrase: '细针穿刺涂片见异型细胞，考虑为腺癌，建议进一步活检明确诊断。',
+    sampleType: '穿刺',
+    useCount: 8,
+    lastUsedAt: '2026-06-10T16:45:00.000Z'
+  },
+  {
+    phrase: '细胞学检查见大量炎性细胞，未见明确癌细胞，建议结合临床。',
+    sampleType: '细胞学',
+    useCount: 15,
+    lastUsedAt: '2026-06-09T11:00:00.000Z'
+  },
+  {
+    phrase: '切缘未见肿瘤细胞，肿瘤浸润至浆膜层，伴淋巴结转移（2/12）。',
+    sampleType: '手术切除',
+    useCount: 6,
+    lastUsedAt: '2026-06-08T15:30:00.000Z'
+  },
+  {
+    phrase: '胃体溃疡型中分化腺癌，溃疡大小约2.5cm，侵及黏膜下层。',
+    sampleType: '胃镜',
+    useCount: 10,
+    lastUsedAt: '2026-06-13T08:50:00.000Z'
+  },
+  {
+    phrase: '乳腺穿刺标本：浸润性导管癌，ER(+)，PR(+)，HER2(-)，Ki-67约30%。',
+    sampleType: '穿刺',
+    useCount: 4,
+    lastUsedAt: '2026-06-07T13:20:00.000Z'
+  }
+];
+
+const PHRASE_SAMPLE_TYPES = ['全部', '穿刺', '胃镜', '肠镜', '手术切除', '细胞学'];
+
+function loadPhrases() {
+  const raw = localStorage.getItem(PHRASE_LIBRARY_STORAGE);
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      return data.map((item) => ({ ...item, id: item.id || uid() }));
+    } catch {
+      return withPhraseIds(PHRASE_LIBRARY_SEED);
+    }
+  }
+  return withPhraseIds(PHRASE_LIBRARY_SEED);
+}
+
+function withPhraseIds(items) {
+  return items.map((item) => ({
+    id: uid(),
+    createdAt: item.createdAt || new Date().toISOString(),
+    ...item
+  }));
+}
+
+function persistPhrases(next) {
+  localStorage.setItem(PHRASE_LIBRARY_STORAGE, JSON.stringify(next));
+}
+
 function loadCriticalNotifies() {
   const raw = localStorage.getItem(CRITICAL_NOTIFY_STORAGE);
   if (raw) {
@@ -727,6 +807,19 @@ function App() {
   });
   const [selectedNotifyForDetail, setSelectedNotifyForDetail] = useState(null);
   const [notifyDuplicateWarning, setNotifyDuplicateWarning] = useState('');
+  const [phrases, setPhrases] = useState(loadPhrases);
+  const [phraseFilters, setPhraseFilters] = useState({ query: '', sampleType: '全部' });
+  const [showPhraseModal, setShowPhraseModal] = useState(false);
+  const [editingPhrase, setEditingPhrase] = useState(null);
+  const [phraseForm, setPhraseForm] = useState({
+    phrase: '',
+    sampleType: '穿刺',
+    useCount: 0,
+    lastUsedAt: ''
+  });
+  const [phraseDeleteConfirm, setPhraseDeleteConfirm] = useState(null);
+  const [phrasePickerTarget, setPhrasePickerTarget] = useState(null);
+  const [showPhrasePicker, setShowPhrasePicker] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -1059,6 +1152,9 @@ function App() {
     setSelectedBorrowForDetail(null);
     setSelectedNotifyForDetail(null);
     setNotifyFilters({ query: '', status: '全部', priority: '全部' });
+    setPhraseFilters({ query: '', sampleType: '全部' });
+    setEditingPhrase(null);
+    setPhraseDeleteConfirm(null);
   }
 
   function persist(next) {
@@ -1074,6 +1170,138 @@ function App() {
   function persistCriticalNotifies(next) {
     setCriticalNotifies(next);
     persistNotifies(next);
+  }
+
+  function handlePhrasesPersist(next) {
+    setPhrases(next);
+    persistPhrases(next);
+  }
+
+  function openPhraseModal(item = null) {
+    if (item) {
+      setEditingPhrase(item);
+      setPhraseForm({
+        phrase: item.phrase || '',
+        sampleType: item.sampleType || '穿刺',
+        useCount: item.useCount || 0,
+        lastUsedAt: item.lastUsedAt || ''
+      });
+    } else {
+      setEditingPhrase(null);
+      setPhraseForm({
+        phrase: '',
+        sampleType: '穿刺',
+        useCount: 0,
+        lastUsedAt: ''
+      });
+    }
+    setShowPhraseModal(true);
+  }
+
+  function closePhraseModal() {
+    setShowPhraseModal(false);
+    setEditingPhrase(null);
+  }
+
+  function handlePhraseSubmit(e) {
+    e.preventDefault();
+    if (!phraseForm.phrase.trim()) return;
+
+    const now = new Date().toISOString();
+    if (editingPhrase) {
+      const next = phrases.map((item) =>
+        item.id === editingPhrase.id
+          ? {
+              ...item,
+              phrase: phraseForm.phrase.trim(),
+              sampleType: phraseForm.sampleType,
+              updatedAt: now
+            }
+          : item
+      );
+      handlePhrasesPersist(next);
+    } else {
+      const newPhrase = {
+        id: uid(),
+        phrase: phraseForm.phrase.trim(),
+        sampleType: phraseForm.sampleType,
+        useCount: 0,
+        lastUsedAt: '',
+        createdAt: now
+      };
+      handlePhrasesPersist([newPhrase, ...phrases]);
+    }
+    closePhraseModal();
+  }
+
+  function confirmDeletePhrase(id) {
+    setPhraseDeleteConfirm(id);
+  }
+
+  function cancelDeletePhrase() {
+    setPhraseDeleteConfirm(null);
+  }
+
+  function removePhrase(id) {
+    const next = phrases.filter((item) => item.id !== id);
+    handlePhrasesPersist(next);
+    setPhraseDeleteConfirm(null);
+  }
+
+  function recordPhraseUsage(id) {
+    const now = new Date().toISOString();
+    const next = phrases.map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            useCount: (item.useCount || 0) + 1,
+            lastUsedAt: now
+          }
+        : item
+    );
+    handlePhrasesPersist(next);
+  }
+
+  function openPhrasePicker(target) {
+    setPhrasePickerTarget(target);
+    setShowPhrasePicker(true);
+  }
+
+  function closePhrasePicker() {
+    setShowPhrasePicker(false);
+    setPhrasePickerTarget(null);
+  }
+
+  function applyPhrase(phraseItem) {
+    if (!phrasePickerTarget || !selected) {
+      closePhrasePicker();
+      return;
+    }
+
+    recordPhraseUsage(phraseItem.id);
+
+    if (phrasePickerTarget === 'summary') {
+      const currentSummary = selected.summary || '';
+      const newSummary = currentSummary
+        ? currentSummary + '\n' + phraseItem.phrase
+        : phraseItem.phrase;
+
+      const next = records.map((item) =>
+        item.id === selected.id
+          ? { ...item, summary: newSummary }
+          : item
+      );
+      persist(next);
+      setSelected(next.find((item) => item.id === selected.id));
+    } else if (phrasePickerTarget === 'review') {
+      const currentRemark = reviewForm.remark || '';
+      const newRemark = currentRemark
+        ? currentRemark + '\n' + phraseItem.phrase
+        : phraseItem.phrase;
+      setReviewForm({ ...reviewForm, remark: newRemark });
+    }
+
+    closePhrasePicker();
   }
 
   function openNotifyModal(caseItem = null) {
@@ -1272,6 +1500,35 @@ function App() {
         return new Date(b.sentAt || b.createdAt).getTime() - new Date(a.sentAt || a.createdAt).getTime();
       });
   }, [criticalNotifies, notifyFilters, tick]);
+
+  const filteredPhrases = useMemo(() => {
+    return phrases
+      .filter((item) => {
+        if (phraseFilters.sampleType !== '全部' && item.sampleType !== phraseFilters.sampleType) {
+          return false;
+        }
+        if (phraseFilters.query) {
+          const q = phraseFilters.query.toLowerCase();
+          return item.phrase.toLowerCase().includes(q);
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (a.lastUsedAt && b.lastUsedAt) {
+          return new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime();
+        }
+        if (a.lastUsedAt) return -1;
+        if (b.lastUsedAt) return 1;
+        return (b.useCount || 0) - (a.useCount || 0);
+      });
+  }, [phrases, phraseFilters]);
+
+  const phraseStats = useMemo(() => {
+    let total = phrases.length;
+    let totalUsed = phrases.filter((p) => (p.useCount || 0) > 0).length;
+    let totalUseCount = phrases.reduce((sum, p) => sum + (p.useCount || 0), 0);
+    return { total, totalUsed, totalUseCount };
+  }, [phrases]);
 
   const notifyStats = useMemo(() => {
     void tick;
@@ -1912,6 +2169,13 @@ function App() {
             <span className="notify-tab-badge">{notifyStats.pending}</span>
           )}
         </button>
+        <button
+          className={`view-tab ${activeView === 'phrase-library' ? 'active' : ''}`}
+          onClick={() => handleViewChange('phrase-library')}
+        >
+          <BookOpen size={16} />
+          诊断短语库
+        </button>
       </section>
 
       {activeView === 'workbench' && (
@@ -2240,7 +2504,20 @@ function App() {
             <div className="detail">
               <h3>{selected.caseNo}</h3>
               <p>{`${selected.sampleType} · ${selected.priority} · ${selected.doctor}`}</p>
-              <p>{selected.summary}</p>
+              <div className="detail-summary-section">
+                <p className="detail-summary-text">{selected.summary || '暂无备注'}</p>
+                <button
+                  type="button"
+                  className="phrase-add-btn"
+                  onClick={() => {
+                    setPhraseFilters({ query: '', sampleType: selected.sampleType || '全部' });
+                    openPhrasePicker('summary');
+                  }}
+                >
+                  <BookOpen size={14} />
+                  插入短语
+                </button>
+              </div>
 
               {(() => {
                 const tat = calcTatInfo(selected);
@@ -2355,7 +2632,21 @@ function App() {
                             </select>
                           </label>
                           <label className="wide">
-                            <span><ClipboardList size={13} />补充说明</span>
+                            <span className="review-field-label">
+                              <ClipboardList size={13} />补充说明
+                              <button
+                                type="button"
+                                className="phrase-add-btn phrase-add-btn-sm"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setPhraseFilters({ query: '', sampleType: selected.sampleType || '全部' });
+                                  openPhrasePicker('review');
+                                }}
+                              >
+                                <BookOpen size={12} />
+                                插入短语
+                              </button>
+                            </span>
                             <textarea
                               value={reviewForm.remark}
                               onChange={(e) => setReviewForm({ ...reviewForm, remark: e.target.value })}
@@ -3673,6 +3964,180 @@ function App() {
         </>
       )}
 
+      {activeView === 'phrase-library' && (
+        <>
+          <section className="borrow-stats">
+            <article className="metric borrow-metric borrow-metric-total">
+              <span>短语总数</span>
+              <strong>{phraseStats.total}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-unreturned">
+              <span>已使用</span>
+              <strong>{phraseStats.totalUsed}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-overdue">
+              <span>总使用次数</span>
+              <strong>{phraseStats.totalUseCount}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-returned">
+              <span>当前显示</span>
+              <strong>{filteredPhrases.length}</strong>
+            </article>
+          </section>
+
+          <section className="workspace borrow-workspace">
+            <form className="panel form-panel borrow-form-panel" onSubmit={handlePhraseSubmit}>
+              <div className="panel-title">
+                <Plus size={18} />
+                <h2>{editingPhrase ? '编辑诊断短语' : '新增诊断短语'}</h2>
+              </div>
+              <div className="form-grid">
+                <label className="wide">
+                  <span><FileText size={13} />诊断短语</span>
+                  <textarea
+                    value={phraseForm.phrase}
+                    onChange={(e) => setPhraseForm({ ...phraseForm, phrase: e.target.value })}
+                    placeholder="请输入诊断短语内容"
+                    rows={4}
+                    required
+                  />
+                </label>
+                <label>
+                  <span><Stethoscope size={13} />适用标本类型</span>
+                  <select
+                    value={phraseForm.sampleType}
+                    onChange={(e) => setPhraseForm({ ...phraseForm, sampleType: e.target.value })}
+                  >
+                    {appConfig.fields.find((f) => f.key === 'sampleType')?.options.map((t) => (
+                      <option key={t}>{t}</option>
+                    ))}
+                  </select>
+                </label>
+                {editingPhrase && (
+                  <>
+                    <label>
+                      <span><Zap size={13} />使用次数</span>
+                      <input type="text" value={editingPhrase.useCount || 0} disabled />
+                    </label>
+                    <label className="wide">
+                      <span><Clock size={13} />最近使用</span>
+                      <input
+                        type="text"
+                        value={editingPhrase.lastUsedAt ? new Date(editingPhrase.lastUsedAt).toLocaleString('zh-CN') : '未使用'}
+                        disabled
+                      />
+                    </label>
+                  </>
+                )}
+              </div>
+              <div className="form-actions">
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={!phraseForm.phrase.trim()}
+                >
+                  <Save size={18} />{editingPhrase ? '保存修改' : '新增短语'}
+                </button>
+                {editingPhrase && (
+                  <button className="secondary" type="button" onClick={closePhraseModal}>
+                    <X size={18} />取消
+                  </button>
+                )}
+              </div>
+              <p className="hint">维护常用的病理诊断短语，支持按标本类型分类，便于快速录入。</p>
+            </form>
+
+            <section className="panel list-panel borrow-list-panel">
+              <div className="toolbar borrow-toolbar">
+                <div className="search">
+                  <Search size={16} />
+                  <input
+                    value={phraseFilters.query}
+                    onChange={(e) => setPhraseFilters({ ...phraseFilters, query: e.target.value })}
+                    placeholder="搜索诊断短语..."
+                  />
+                </div>
+                <select
+                  value={phraseFilters.sampleType}
+                  onChange={(e) => setPhraseFilters({ ...phraseFilters, sampleType: e.target.value })}
+                >
+                  {PHRASE_SAMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div className="borrow-list">
+                {filteredPhrases.length === 0 && (
+                  <div className="dispatch-empty">
+                    <BookOpen size={32} />
+                    <p>暂无符合条件的诊断短语</p>
+                  </div>
+                )}
+                {filteredPhrases.map((item) => (
+                  <article
+                    key={item.id}
+                    className="borrow-card phrase-card"
+                  >
+                    <div className="borrow-card-head">
+                      <div className="phrase-content">
+                        <p>{item.phrase}</p>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                        <span className={`priority-tag priority-${item.sampleType ? '常规' : '常规'}`} style={{ background: '#eef2ff', color: '#3730a3' }}>
+                          {item.sampleType}
+                        </span>
+                        <span className="phrase-use-count">
+                          使用 {item.useCount || 0} 次
+                        </span>
+                      </div>
+                    </div>
+                    {item.lastUsedAt && (
+                      <p className="phrase-last-used">
+                        最近使用：{new Date(item.lastUsedAt).toLocaleString('zh-CN')}
+                      </p>
+                    )}
+                    <div className="borrow-card-actions">
+                      <button
+                        className="wb-btn"
+                        type="button"
+                        onClick={() => openPhraseModal(item)}
+                      >
+                        <Edit size={13} />编辑
+                      </button>
+                      {phraseDeleteConfirm === item.id ? (
+                        <>
+                          <button
+                            className="wb-btn wb-btn-return"
+                            type="button"
+                            onClick={() => removePhrase(item.id)}
+                          >
+                            <CheckCircle2 size={13} />确认删除
+                          </button>
+                          <button
+                            className="ghost-danger wb-btn"
+                            type="button"
+                            onClick={cancelDeletePhrase}
+                          >
+                            <X size={13} />取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="ghost-danger wb-btn"
+                          type="button"
+                          onClick={() => confirmDeletePhrase(item.id)}
+                        >
+                          <Trash2 size={13} />删除
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </section>
+        </>
+      )}
+
       {showNotifyModal && (
         <div className="batch-overlay" onClick={closeNotifyModal}>
           <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
@@ -3837,6 +4302,70 @@ function App() {
                   <CheckCircle2 size={16} />确认派单
                 </button>
                 <button className="secondary" type="button" onClick={cancelDispatch}>取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPhrasePicker && (
+        <div className="batch-overlay" onClick={closePhrasePicker}>
+          <div className="batch-modal phrase-picker-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <BookOpen size={18} />
+                <h2>选择诊断短语</h2>
+                <span className="review-readonly-tag" style={{ marginLeft: '8px' }}>
+                  追加到：{phrasePickerTarget === 'summary' ? '病例备注' : '复核意见'}
+                </span>
+              </div>
+              <button className="batch-close" onClick={closePhrasePicker}><X size={18} /></button>
+            </div>
+            <div className="batch-body phrase-picker-body">
+              <div className="phrase-picker-filters">
+                <div className="search">
+                  <Search size={16} />
+                  <input
+                    value={phraseFilters.query}
+                    onChange={(e) => setPhraseFilters({ ...phraseFilters, query: e.target.value })}
+                    placeholder="搜索诊断短语..."
+                    autoFocus
+                  />
+                </div>
+                <select
+                  value={phraseFilters.sampleType}
+                  onChange={(e) => setPhraseFilters({ ...phraseFilters, sampleType: e.target.value })}
+                >
+                  {PHRASE_SAMPLE_TYPES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="phrase-picker-list">
+                {filteredPhrases.length === 0 && (
+                  <div className="dispatch-empty">
+                    <BookOpen size={28} />
+                    <p>暂无符合条件的诊断短语</p>
+                  </div>
+                )}
+                {filteredPhrases.map((item) => (
+                  <div
+                    key={item.id}
+                    className="phrase-picker-item"
+                    onClick={() => applyPhrase(item)}
+                  >
+                    <div className="phrase-picker-item-content">
+                      <p>{item.phrase}</p>
+                    </div>
+                    <div className="phrase-picker-item-meta">
+                      <span className="phrase-picker-tag">{item.sampleType}</span>
+                      <span className="phrase-picker-count">使用{item.useCount || 0}次</span>
+                      {item.lastUsedAt && (
+                        <span className="phrase-picker-time">
+                          {new Date(item.lastUsedAt).toLocaleDateString('zh-CN')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
