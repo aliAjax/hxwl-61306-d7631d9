@@ -2220,6 +2220,23 @@ textarea { min-height: 76px; resize: vertical; }
   color: #047857 !important;
 }
 
+.timeline-slide-overdue {
+  border-left-color: #ef4444 !important;
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%) !important;
+  color: #991b1b !important;
+  font-weight: 600 !important;
+  animation: overdue-pulse 2s infinite;
+}
+
+@keyframes overdue-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+  }
+}
+
 @media (max-width: 980px) {
   .borrow-stats {
     grid-template-columns: repeat(2, 1fr);

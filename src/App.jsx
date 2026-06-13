@@ -319,6 +319,32 @@ function borrowStatusClass(status) {
   }
 }
 
+function getFullBorrowTimeline(item) {
+  const baseTimeline = [...(item.timeline || buildBorrowTimeline(item))];
+  if (isOverdue(item)) {
+    const odDays = overdueDays(item);
+    const overdueEvent = {
+      type: 'slide-overdue',
+      event: `玻片逾期（超${odDays}天）`,
+      at: formatDateShort(item.expectedReturnTime),
+      by: '系统提醒',
+      changedAt: item.expectedReturnTime,
+      overdueDays: odDays
+    };
+    const expectedTime = new Date(item.expectedReturnTime).getTime();
+    let insertIndex = baseTimeline.length;
+    for (let i = 0; i < baseTimeline.length; i++) {
+      const t = new Date(baseTimeline[i].changedAt || baseTimeline[i].at).getTime();
+      if (t > expectedTime) {
+        insertIndex = i;
+        break;
+      }
+    }
+    baseTimeline.splice(insertIndex, 0, overdueEvent);
+  }
+  return baseTimeline;
+}
+
 function avg(numbers) {
   const valid = numbers.filter((value) => Number.isFinite(value));
   if (!valid.length) return 0;
@@ -1125,6 +1151,7 @@ function App() {
   }, [slideBorrows]);
 
   const getMergedTimeline = useMemo(() => {
+    void tick;
     return (record) => {
       const caseBorrows = slideBorrows.filter((b) => b.caseNo === record.caseNo);
       const merged = [];
@@ -1138,7 +1165,7 @@ function App() {
       });
 
       caseBorrows.forEach((borrow) => {
-        (borrow.timeline || []).forEach((event) => {
+        getFullBorrowTimeline(borrow).forEach((event) => {
           merged.push({
             ...event,
             borrowId: borrow.id,
@@ -1150,7 +1177,7 @@ function App() {
 
       return merged.sort((a, b) => a.sortTime - b.sortTime);
     };
-  }, [slideBorrows]);
+  }, [slideBorrows, tick]);
 
   function addRecord(event) {
     event.preventDefault();
@@ -1950,6 +1977,7 @@ function App() {
                   const isSlideBorrow = step.type === 'slide-borrow';
                   const isSlideReceive = step.type === 'slide-receive';
                   const isSlideReturn = step.type === 'slide-return';
+                  const isSlideOverdue = step.type === 'slide-overdue';
                   const reviewForStep = isReview
                     ? (selected.reviews || []).find((r) => r.id === step.reviewId)
                     : null;
@@ -1968,6 +1996,9 @@ function App() {
                   if (isSlideBorrow && step.department) {
                     displayText += `（${step.department}）`;
                   }
+                  if (isSlideOverdue && step.borrower) {
+                    displayText += `（借阅人：${step.borrower}）`;
+                  }
                   displayText += ` · ${step.by}`;
                   return (
                     <span key={index} className={`
@@ -1976,6 +2007,7 @@ function App() {
                       ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
                       ${isSlideReceive ? 'timeline-slide-receive' : ''}
                       ${isSlideReturn ? 'timeline-slide-return' : ''}
+                      ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
                     `}>
                       {displayText}
                     </span>
@@ -2572,7 +2604,7 @@ function App() {
                   )}
                 </div>
                 <div className="timeline">
-                  {(selectedBorrowForDetail.timeline || []).map((event, index) => (
+                  {getFullBorrowTimeline(selectedBorrowForDetail).map((event, index) => (
                     <span key={index} className={`timeline-${event.type}`}>
                       {event.at} · {event.event} · {event.by}
                       {event.department && `（${event.department}）`}
@@ -2598,6 +2630,7 @@ function App() {
                         const isSlideBorrow = step.type === 'slide-borrow';
                         const isSlideReceive = step.type === 'slide-receive';
                         const isSlideReturn = step.type === 'slide-return';
+                        const isSlideOverdue = step.type === 'slide-overdue';
                         const isDispatch = step.status === '派单';
 
                         let displayText = `${step.at} · `;
@@ -2613,6 +2646,9 @@ function App() {
                         if (isSlideBorrow && step.department) {
                           displayText += `（${step.department}）`;
                         }
+                        if (isSlideOverdue && step.borrower) {
+                          displayText += `（借阅人：${step.borrower}）`;
+                        }
 
                         displayText += ` · ${step.by}`;
 
@@ -2625,6 +2661,7 @@ function App() {
                               ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
                               ${isSlideReceive ? 'timeline-slide-receive' : ''}
                               ${isSlideReturn ? 'timeline-slide-return' : ''}
+                              ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
                             `}
                           >
                             {displayText}
