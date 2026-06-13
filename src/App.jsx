@@ -1636,17 +1636,17 @@ function App() {
                     value={dispatchFilters.priority}
                     onChange={(e) => setDispatchFilters({ ...dispatchFilters, priority: e.target.value })}
                   >
-                    <option>全部优先级</option>
-                    <option>常规</option>
-                    <option>加急</option>
-                    <option>危急</option>
+                    <option value="全部">全部优先级</option>
+                    <option value="常规">常规</option>
+                    <option value="加急">加急</option>
+                    <option value="危急">危急</option>
                   </select>
                   <select
                     value={dispatchFilters.sampleType}
                     onChange={(e) => setDispatchFilters({ ...dispatchFilters, sampleType: e.target.value })}
                   >
-                    <option>全部标本类型</option>
-                    {sampleTypeList.map((t) => <option key={t}>{t}</option>)}
+                    <option value="全部">全部标本类型</option>
+                    {sampleTypeList.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
                 <div className="dispatch-actions">
