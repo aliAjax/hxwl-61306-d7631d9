@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2 } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -192,6 +192,129 @@ const SLIDE_BORROW_SEED = [
 ];
 
 const DEFAULT_DEPARTMENTS = ['病理科', '外科', '内科', '肿瘤科', '妇产科', '儿科', '骨科', '皮肤科', '眼科', '耳鼻喉科'];
+
+const CRITICAL_NOTIFY_STORAGE = 'hxwl-61306-critical-notify';
+const CRITICAL_NOTIFY_STATUS = {
+  PENDING: '待确认',
+  CONFIRMED: '已确认',
+  EXPIRED: '已超时'
+};
+const CRITICAL_NOTIFY_STATUS_LIST = ['全部', '待确认', '已确认', '已超时'];
+const CRITICAL_NOTIFY_METHODS = ['电话', '短信', '微信', '系统消息', '现场通知', '其他'];
+const CRITICAL_NOTIFY_REASONS = ['危急病例', '进入待复核'];
+const NOTIFY_TARGET_PRESETS = ['临床主管医生', '科室主任', '病理科主任', '护士站', '手术室', '家属', '医务科'];
+const NOTIFY_DUPLICATE_WINDOW_MINUTES = 30;
+const NOTIFY_REMINDER_MINUTES = 15;
+const NOTIFY_EXPIRE_HOURS = 24;
+
+const CRITICAL_NOTIFY_SEED = [
+  {
+    caseNo: 'P2026061117',
+    notifyTarget: '周医生',
+    notifyMethod: '电话',
+    sentAt: '2026-06-13T09:00',
+    confirmedAt: '2026-06-13T09:08',
+    confirmedBy: '周医生',
+    remark: '已电话通知，医生表示立即处理',
+    triggerReason: '危急病例',
+    priority: '危急',
+    status: '已确认'
+  },
+  {
+    caseNo: 'P2026061117',
+    notifyTarget: '外科护士站',
+    notifyMethod: '系统消息',
+    sentAt: '2026-06-14T08:30',
+    confirmedAt: '',
+    confirmedBy: '',
+    remark: '',
+    triggerReason: '进入待复核',
+    priority: '危急',
+    status: '待确认'
+  }
+];
+
+function loadCriticalNotifies() {
+  const raw = localStorage.getItem(CRITICAL_NOTIFY_STORAGE);
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      return data.map((item) => ({ ...item, id: item.id || uid() }));
+    } catch {
+      return withNotifyIds(CRITICAL_NOTIFY_SEED);
+    }
+  }
+  return withNotifyIds(CRITICAL_NOTIFY_SEED);
+}
+
+function withNotifyIds(items) {
+  return items.map((item) => ({
+    id: uid(),
+    createdAt: item.createdAt || item.sentAt || new Date().toISOString(),
+    ...item
+  }));
+}
+
+function persistNotifies(next) {
+  localStorage.setItem(CRITICAL_NOTIFY_STORAGE, JSON.stringify(next));
+}
+
+function calcNotifyStatus(item) {
+  if (item.confirmedAt) return CRITICAL_NOTIFY_STATUS.CONFIRMED;
+  const now = Date.now();
+  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
+  const expireMs = NOTIFY_EXPIRE_HOURS * 60 * 60 * 1000;
+  if (now - sentTime > expireMs) return CRITICAL_NOTIFY_STATUS.EXPIRED;
+  return CRITICAL_NOTIFY_STATUS.PENDING;
+}
+
+function isNotifyOverdue(item) {
+  if (item.confirmedAt) return false;
+  const now = Date.now();
+  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
+  const overdueMs = NOTIFY_REMINDER_MINUTES * 60 * 1000;
+  return now - sentTime > overdueMs;
+}
+
+function notifyOverdueMinutes(item) {
+  if (!isNotifyOverdue(item)) return 0;
+  const now = Date.now();
+  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
+  return Math.floor((now - sentTime) / 60000);
+}
+
+function minutesSinceSent(item) {
+  const now = Date.now();
+  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
+  return Math.floor((now - sentTime) / 60000);
+}
+
+function hasDuplicateUnconfirmedNotify(caseId, caseNo, notifyTarget, notifies) {
+  const now = Date.now();
+  const windowMs = NOTIFY_DUPLICATE_WINDOW_MINUTES * 60 * 1000;
+  return notifies.some((n) => {
+    const caseMatch = (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo);
+    if (!caseMatch) return false;
+    if (n.notifyTarget !== notifyTarget) return false;
+    if (n.confirmedAt) return false;
+    const sentTime = new Date(n.sentAt || n.createdAt).getTime();
+    return now - sentTime < windowMs;
+  });
+}
+
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-';
+  try {
+    return new Date(dateStr).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return dateStr;
+  }
+}
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -586,6 +709,20 @@ function App() {
     remark: ''
   });
   const [selectedBorrowForDetail, setSelectedBorrowForDetail] = useState(null);
+  const [criticalNotifies, setCriticalNotifies] = useState(loadCriticalNotifies);
+  const [notifyFilters, setNotifyFilters] = useState({ query: '', status: '全部', priority: '全部' });
+  const [showNotifyModal, setShowNotifyModal] = useState(false);
+  const [notifyForm, setNotifyForm] = useState({
+    caseId: '',
+    caseNo: '',
+    notifyTarget: '',
+    notifyMethod: '电话',
+    sentAt: '',
+    triggerReason: '危急病例',
+    remark: ''
+  });
+  const [selectedNotifyForDetail, setSelectedNotifyForDetail] = useState(null);
+  const [notifyDuplicateWarning, setNotifyDuplicateWarning] = useState('');
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -916,6 +1053,8 @@ function App() {
     setDispatchResult(null);
     setDispatchFilters({ query: '', priority: '全部', sampleType: '全部' });
     setSelectedBorrowForDetail(null);
+    setSelectedNotifyForDetail(null);
+    setNotifyFilters({ query: '', status: '全部', priority: '全部' });
   }
 
   function persist(next) {
@@ -927,6 +1066,244 @@ function App() {
     setSlideBorrows(next);
     localStorage.setItem(SLIDE_BORROW_STORAGE, JSON.stringify(next));
   }
+
+  function persistCriticalNotifies(next) {
+    setCriticalNotifies(next);
+    persistNotifies(next);
+  }
+
+  function openNotifyModal(caseItem = null) {
+    if (caseItem) {
+      const defaultReason = caseItem.priority === '危急' ? '危急病例' : (caseItem.status === '待复核' ? '进入待复核' : '危急病例');
+      setNotifyForm({
+        caseId: caseItem.id || '',
+        caseNo: caseItem.caseNo || '',
+        notifyTarget: caseItem.doctor || '',
+        notifyMethod: '电话',
+        sentAt: new Date().toISOString().slice(0, 16),
+        triggerReason: defaultReason,
+        remark: ''
+      });
+      setNotifyDuplicateWarning('');
+    } else {
+      setNotifyForm({
+        caseId: '',
+        caseNo: '',
+        notifyTarget: '',
+        notifyMethod: '电话',
+        sentAt: new Date().toISOString().slice(0, 16),
+        triggerReason: '危急病例',
+        remark: ''
+      });
+      setNotifyDuplicateWarning('');
+    }
+    setShowNotifyModal(true);
+  }
+
+  function closeNotifyModal() {
+    setShowNotifyModal(false);
+    setNotifyDuplicateWarning('');
+  }
+
+  function checkNotifyDuplicate() {
+    if (!notifyForm.caseNo || !notifyForm.notifyTarget) {
+      setNotifyDuplicateWarning('');
+      return false;
+    }
+    const isDuplicate = hasDuplicateUnconfirmedNotify(
+      notifyForm.caseId,
+      notifyForm.caseNo,
+      notifyForm.notifyTarget,
+      criticalNotifies
+    );
+    if (isDuplicate) {
+      setNotifyDuplicateWarning(`该病例在${NOTIFY_DUPLICATE_WINDOW_MINUTES}分钟内已存在对「${notifyForm.notifyTarget}」的未确认通知，请勿重复发送`);
+    } else {
+      setNotifyDuplicateWarning('');
+    }
+    return isDuplicate;
+  }
+
+  function handleNotifySubmit(e) {
+    e.preventDefault();
+    if (!notifyForm.caseNo.trim() || !notifyForm.notifyTarget.trim() || !notifyForm.sentAt) {
+      return;
+    }
+    if (checkNotifyDuplicate()) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const caseRecord = records.find((r) => r.id === notifyForm.caseId || r.caseNo === notifyForm.caseNo);
+    const priority = caseRecord?.priority || '常规';
+    const newNotify = {
+      id: uid(),
+      caseId: notifyForm.caseId || caseRecord?.id || '',
+      caseNo: notifyForm.caseNo.trim(),
+      notifyTarget: notifyForm.notifyTarget.trim(),
+      notifyMethod: notifyForm.notifyMethod,
+      sentAt: notifyForm.sentAt,
+      confirmedAt: '',
+      confirmedBy: '',
+      remark: notifyForm.remark.trim(),
+      triggerReason: notifyForm.triggerReason,
+      priority,
+      createdAt: now
+    };
+    persistCriticalNotifies([newNotify, ...criticalNotifies]);
+    if (caseRecord) {
+      const updatedRecords = records.map((item) => {
+        if (item.id === caseRecord.id) {
+          return {
+            ...item,
+            timeline: [
+              ...(item.timeline || []),
+              {
+                type: 'critical-notify-sent',
+                event: '通知发送',
+                at: formatDateShort(notifyForm.sentAt),
+                by: '系统',
+                changedAt: notifyForm.sentAt,
+                notifyId: newNotify.id,
+                notifyTarget: newNotify.notifyTarget,
+                notifyMethod: newNotify.notifyMethod,
+                triggerReason: newNotify.triggerReason
+              }
+            ]
+          };
+        }
+        return item;
+      });
+      persist(updatedRecords);
+      if (selected?.id === caseRecord.id) {
+        setSelected(updatedRecords.find((r) => r.id === caseRecord.id));
+      }
+    }
+    closeNotifyModal();
+  }
+
+  function confirmNotify(notifyItem, confirmedBy = '') {
+    const now = new Date().toISOString();
+    const confirmer = confirmedBy.trim() || notifyItem.notifyTarget;
+    const nextNotifies = criticalNotifies.map((n) =>
+      n.id === notifyItem.id
+        ? { ...n, confirmedAt: now, confirmedBy: confirmer, status: CRITICAL_NOTIFY_STATUS.CONFIRMED }
+        : n
+    );
+    persistCriticalNotifies(nextNotifies);
+    const caseRecord = records.find((r) => r.id === notifyItem.caseId || r.caseNo === notifyItem.caseNo);
+    if (caseRecord) {
+      const updatedRecords = records.map((item) => {
+        if (item.id === caseRecord.id) {
+          return {
+            ...item,
+            timeline: [
+              ...(item.timeline || []),
+              {
+                type: 'critical-notify-confirmed',
+                event: '通知确认',
+                at: formatDateShort(now),
+                by: confirmer,
+                changedAt: now,
+                notifyId: notifyItem.id,
+                notifyTarget: notifyItem.notifyTarget,
+                notifyMethod: notifyItem.notifyMethod
+              }
+            ]
+          };
+        }
+        return item;
+      });
+      persist(updatedRecords);
+      if (selected?.id === caseRecord.id) {
+        setSelected(updatedRecords.find((r) => r.id === caseRecord.id));
+      }
+    }
+  }
+
+  function removeNotifyRecord(id) {
+    const next = criticalNotifies.filter((item) => item.id !== id);
+    persistCriticalNotifies(next);
+    if (selectedNotifyForDetail?.id === id) {
+      setSelectedNotifyForDetail(null);
+    }
+  }
+
+  function getCaseNotifies(caseNo, caseId) {
+    return criticalNotifies.filter((n) =>
+      (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo)
+    );
+  }
+
+  const filteredNotifies = useMemo(() => {
+    void tick;
+    return criticalNotifies
+      .filter((item) => {
+        const realStatus = calcNotifyStatus(item);
+        if (notifyFilters.status !== '全部' && realStatus !== notifyFilters.status) {
+          return false;
+        }
+        if (notifyFilters.priority !== '全部' && item.priority !== notifyFilters.priority) {
+          return false;
+        }
+        if (notifyFilters.query) {
+          const q = notifyFilters.query.toLowerCase();
+          return (
+            item.caseNo.toLowerCase().includes(q) ||
+            item.notifyTarget.toLowerCase().includes(q) ||
+            (item.remark || '').toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const statusOrder = { '待确认': 0, '已超时': 1, '已确认': 2 };
+        const statusA = statusOrder[calcNotifyStatus(a)] ?? 9;
+        const statusB = statusOrder[calcNotifyStatus(b)] ?? 9;
+        if (statusA !== statusB) return statusA - statusB;
+        return new Date(b.sentAt || b.createdAt).getTime() - new Date(a.sentAt || a.createdAt).getTime();
+      });
+  }, [criticalNotifies, notifyFilters, tick]);
+
+  const notifyStats = useMemo(() => {
+    void tick;
+    let total = criticalNotifies.length;
+    let pending = 0;
+    let confirmed = 0;
+    let expired = 0;
+    let overduePending = 0;
+    criticalNotifies.forEach((item) => {
+      const status = calcNotifyStatus(item);
+      if (status === CRITICAL_NOTIFY_STATUS.PENDING) pending++;
+      if (status === CRITICAL_NOTIFY_STATUS.CONFIRMED) confirmed++;
+      if (status === CRITICAL_NOTIFY_STATUS.EXPIRED) expired++;
+      if (status === CRITICAL_NOTIFY_STATUS.PENDING && isNotifyOverdue(item)) overduePending++;
+    });
+    return { total, pending, confirmed, expired, overduePending };
+  }, [criticalNotifies, tick]);
+
+  const notifyStatusClass = (status) => {
+    switch (status) {
+      case CRITICAL_NOTIFY_STATUS.PENDING:
+        return 'notify-status-pending';
+      case CRITICAL_NOTIFY_STATUS.CONFIRMED:
+        return 'notify-status-confirmed';
+      case CRITICAL_NOTIFY_STATUS.EXPIRED:
+        return 'notify-status-expired';
+      default:
+        return 'notify-status-pending';
+    }
+  };
+
+  const notifyMethodIcon = (method) => {
+    switch (method) {
+      case '电话': return Phone;
+      case '短信': return MessageSquare;
+      case '微信': return MessageSquare;
+      case '系统消息': return Radio;
+      case '现场通知': return HandHeart;
+      default: return Bell;
+    }
+  };
 
   function openBorrowModal(item = null) {
     if (item) {
@@ -1178,6 +1555,48 @@ function App() {
       return merged.sort((a, b) => a.sortTime - b.sortTime);
     };
   }, [slideBorrows, tick]);
+
+  const getMergedTimelineWithNotify = useMemo(() => {
+    void tick;
+    return (record) => {
+      const baseTimeline = getMergedTimeline(record);
+      const caseNotifies = getCaseNotifies(record.caseNo, record.id);
+      const extraEvents = [];
+      caseNotifies.forEach((notify) => {
+        const hasSent = baseTimeline.some((t) => t.notifyId === notify.id && t.type === 'critical-notify-sent');
+        const hasConfirmed = baseTimeline.some((t) => t.notifyId === notify.id && t.type === 'critical-notify-confirmed');
+        if (!hasSent) {
+          extraEvents.push({
+            type: 'critical-notify-sent',
+            event: '通知发送',
+            at: formatDateShort(notify.sentAt || notify.createdAt),
+            by: '系统',
+            changedAt: notify.sentAt || notify.createdAt,
+            notifyId: notify.id,
+            notifyTarget: notify.notifyTarget,
+            notifyMethod: notify.notifyMethod,
+            triggerReason: notify.triggerReason,
+            sortTime: new Date(notify.sentAt || notify.createdAt).getTime()
+          });
+        }
+        if (notify.confirmedAt && !hasConfirmed) {
+          extraEvents.push({
+            type: 'critical-notify-confirmed',
+            event: '通知确认',
+            at: formatDateShort(notify.confirmedAt),
+            by: notify.confirmedBy || notify.notifyTarget,
+            changedAt: notify.confirmedAt,
+            notifyId: notify.id,
+            notifyTarget: notify.notifyTarget,
+            notifyMethod: notify.notifyMethod,
+            sortTime: new Date(notify.confirmedAt).getTime()
+          });
+        }
+      });
+      const merged = [...baseTimeline, ...extraEvents];
+      return merged.sort((a, b) => a.sortTime - b.sortTime);
+    };
+  }, [criticalNotifies, tick, getMergedTimeline, records]);
 
   function addRecord(event) {
     event.preventDefault();
@@ -1473,6 +1892,16 @@ function App() {
         >
           <BookOpen size={16} />
           玻片借阅归还
+        </button>
+        <button
+          className={`view-tab ${activeView === 'critical-notify' ? 'active' : ''}`}
+          onClick={() => handleViewChange('critical-notify')}
+        >
+          <BellRing size={16} />
+          危急病例通知
+          {notifyStats.pending > 0 && (
+            <span className="notify-tab-badge">{notifyStats.pending}</span>
+          )}
         </button>
       </section>
 
@@ -1970,14 +2399,96 @@ function App() {
                 </div>
               )}
 
+              {(() => {
+                const caseNotifies = getCaseNotifies(selected.caseNo, selected.id);
+                return (
+                  <div className="case-notify-section">
+                    <div className="review-header" style={{ marginTop: '14px' }}>
+                      <div className="panel-title" style={{ margin: 0 }}>
+                        <Bell size={16} />
+                        <h2 style={{ fontSize: '16px' }}>通知记录 ({caseNotifies.length})</h2>
+                      </div>
+                    </div>
+                    {caseNotifies.length === 0 ? (
+                      <div className="review-empty" style={{ padding: '16px 12px' }}>
+                        <Bell size={28} />
+                        <p>暂无通知记录</p>
+                      </div>
+                    ) : (
+                      <div className="case-notify-list">
+                        {caseNotifies.map((n) => {
+                          const ns = calcNotifyStatus(n);
+                          const MethodIcon = notifyMethodIcon(n.notifyMethod);
+                          const overdue = isNotifyOverdue(n);
+                          return (
+                            <div key={n.id} className={`case-notify-item notify-item-${notifyStatusClass(ns)}`}>
+                              <div className="case-notify-head">
+                                <span className={`notify-badge ${notifyStatusClass(ns)}`}>{ns}</span>
+                                <span className="case-notify-meta">
+                                  <MethodIcon size={12} />{n.notifyMethod} · {n.notifyTarget}
+                                </span>
+                                {n.priority && (
+                                  <span className={`priority-tag priority-${n.priority}`} style={{ fontSize: '11px', padding: '1px 6px' }}>{n.priority}</span>
+                                )}
+                              </div>
+                              <div className="case-notify-times">
+                                <span>发送：{formatDateTime(n.sentAt)}</span>
+                                {n.confirmedAt ? (
+                                  <span>确认：{formatDateTime(n.confirmedAt)}</span>
+                                ) : (
+                                  overdue && <span className="notify-overdue-inline"><Timer size={11} />超时{notifyOverdueMinutes(n)}分</span>
+                                )}
+                              </div>
+                              {n.triggerReason && (
+                                <div className="case-notify-reason">
+                                  触发原因：{n.triggerReason}
+                                </div>
+                              )}
+                              {n.remark && <div className="case-notify-remark">{n.remark}</div>}
+                              {n.confirmedBy && (
+                                <div className="notify-confirmed-by" style={{ marginTop: '6px', fontSize: '12px' }}>
+                                  <UserCheck size={12} />确认人：{n.confirmedBy}
+                                </div>
+                              )}
+                              {ns === CRITICAL_NOTIFY_STATUS.PENDING && (
+                                <button
+                                  className="wb-btn wb-btn-return"
+                                  type="button"
+                                  style={{ marginTop: '10px', padding: '5px 12px', fontSize: '12px' }}
+                                  onClick={(e) => { e.stopPropagation(); confirmNotify(n); }}
+                                >
+                                  <CheckCircle2 size={13} />确认收到
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {(selected.priority === '危急' || selected.status === '待复核') && (
+                      <button
+                        className="primary"
+                        type="button"
+                        style={{ marginTop: '12px', padding: '10px 16px', fontSize: '13px' }}
+                        onClick={() => openNotifyModal(selected)}
+                      >
+                        <Bell size={15} />发送新通知
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="timeline">
-                {getMergedTimeline(selected).map((step, index) => {
+                {getMergedTimelineWithNotify(selected).map((step, index) => {
                   const isReview = step.type === 'review-status' && step.status === '复核意见';
                   const isDispatch = step.status === '派单';
                   const isSlideBorrow = step.type === 'slide-borrow';
                   const isSlideReceive = step.type === 'slide-receive';
                   const isSlideReturn = step.type === 'slide-return';
                   const isSlideOverdue = step.type === 'slide-overdue';
+                  const isNotifySent = step.type === 'critical-notify-sent';
+                  const isNotifyConfirmed = step.type === 'critical-notify-confirmed';
                   const reviewForStep = isReview
                     ? (selected.reviews || []).find((r) => r.id === step.reviewId)
                     : null;
@@ -1999,6 +2510,12 @@ function App() {
                   if (isSlideOverdue && step.borrower) {
                     displayText += `（借阅人：${step.borrower}）`;
                   }
+                  if (isNotifySent && step.notifyTarget) {
+                    displayText += `（${step.triggerReason || ''}→${step.notifyTarget}/${step.notifyMethod}）`;
+                  }
+                  if (isNotifyConfirmed && step.notifyTarget) {
+                    displayText += `（${step.notifyMethod}→${step.notifyTarget}）`;
+                  }
                   displayText += ` · ${step.by}`;
                   return (
                     <span key={index} className={`
@@ -2008,6 +2525,8 @@ function App() {
                       ${isSlideReceive ? 'timeline-slide-receive' : ''}
                       ${isSlideReturn ? 'timeline-slide-return' : ''}
                       ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
+                      ${isNotifySent ? 'timeline-notify-sent' : ''}
+                      ${isNotifyConfirmed ? 'timeline-notify-confirmed' : ''}
                     `}>
                       {displayText}
                     </span>
@@ -2677,6 +3196,595 @@ function App() {
             </section>
           )}
         </>
+      )}
+
+      {activeView === 'critical-notify' && (
+        <>
+          <section className="borrow-stats">
+            <article className="metric borrow-metric borrow-metric-total">
+              <span>通知总数</span>
+              <strong>{notifyStats.total}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-unreturned">
+              <span>待确认</span>
+              <strong>{notifyStats.pending}</strong>
+              {notifyStats.overduePending > 0 && (
+                <span className="notify-overdue-tag">
+                  <AlertTriangle size={12} />
+                  超{notifyStats.overduePending}条
+                </span>
+              )}
+            </article>
+            <article className="metric borrow-metric borrow-metric-overdue">
+              <span>已超时</span>
+              <strong>{notifyStats.expired}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-returned">
+              <span>已确认</span>
+              <strong>{notifyStats.confirmed}</strong>
+            </article>
+          </section>
+
+          <section className="workspace borrow-workspace">
+            <form className="panel form-panel borrow-form-panel" onSubmit={handleNotifySubmit}>
+              <div className="panel-title">
+                <Plus size={18} />
+                <h2>创建危急通知</h2>
+              </div>
+              <div className="form-grid">
+                <label className="wide">
+                  <span><FileText size={13} />病例号</span>
+                  <input
+                    type="text"
+                    value={notifyForm.caseNo}
+                    onChange={(e) => {
+                      setNotifyForm({ ...notifyForm, caseNo: e.target.value });
+                      const matched = records.find((r) => r.caseNo === e.target.value.trim());
+                      if (matched) {
+                        setNotifyForm((prev) => ({
+                          ...prev,
+                          caseId: matched.id,
+                          notifyTarget: matched.doctor || prev.notifyTarget
+                        }));
+                      }
+                      setTimeout(checkNotifyDuplicate, 50);
+                    }}
+                    placeholder="请输入病例号，如 P2026061117"
+                    list="notify-case-list"
+                    required
+                  />
+                  <datalist id="notify-case-list">
+                    {records
+                      .filter((r) => r.priority === '危急' || r.status === '待复核')
+                      .map((r) => (
+                        <option key={r.id} value={r.caseNo}>
+                          {r.caseNo} - {r.doctor} ({r.priority}/{r.status})
+                        </option>
+                      ))}
+                  </datalist>
+                </label>
+                <label className="wide">
+                  <span><UserCheck size={13} />通知对象</span>
+                  <input
+                    type="text"
+                    value={notifyForm.notifyTarget}
+                    onChange={(e) => {
+                      setNotifyForm({ ...notifyForm, notifyTarget: e.target.value });
+                      setTimeout(checkNotifyDuplicate, 50);
+                    }}
+                    placeholder="请输入通知对象姓名或岗位"
+                    list="notify-target-list"
+                    required
+                  />
+                  <datalist id="notify-target-list">
+                    {NOTIFY_TARGET_PRESETS.map((p) => (
+                      <option key={p} value={p} />
+                    ))}
+                    {doctorList.map((d) => (
+                      <option key={d} value={d} />
+                    ))}
+                  </datalist>
+                </label>
+                <label>
+                  <span><Phone size={13} />通知方式</span>
+                  <select
+                    value={notifyForm.notifyMethod}
+                    onChange={(e) => setNotifyForm({ ...notifyForm, notifyMethod: e.target.value })}
+                  >
+                    {CRITICAL_NOTIFY_METHODS.map((m) => <option key={m}>{m}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span><CalendarClock size={13} />发送时间</span>
+                  <input
+                    type="datetime-local"
+                    value={notifyForm.sentAt}
+                    onChange={(e) => setNotifyForm({ ...notifyForm, sentAt: e.target.value })}
+                    required
+                  />
+                </label>
+                <label className="wide">
+                  <span><AlertTriangle size={13} />触发原因</span>
+                  <select
+                    value={notifyForm.triggerReason}
+                    onChange={(e) => setNotifyForm({ ...notifyForm, triggerReason: e.target.value })}
+                  >
+                    {CRITICAL_NOTIFY_REASONS.map((r) => <option key={r}>{r}</option>)}
+                  </select>
+                </label>
+                <label className="wide">
+                  <span><ClipboardList size={13} />处理备注</span>
+                  <textarea
+                    value={notifyForm.remark}
+                    onChange={(e) => setNotifyForm({ ...notifyForm, remark: e.target.value })}
+                    placeholder="请输入通知内容或处理备注（选填）"
+                    rows={3}
+                  />
+                </label>
+              </div>
+              {notifyDuplicateWarning && (
+                <div className="notify-duplicate-warning">
+                  <AlertTriangle size={16} />
+                  <span>{notifyDuplicateWarning}</span>
+                </div>
+              )}
+              <div className="form-actions">
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={!notifyForm.caseNo.trim() || !notifyForm.notifyTarget.trim() || !notifyForm.sentAt || !!notifyDuplicateWarning}
+                >
+                  <Send size={18} />发送通知
+                </button>
+              </div>
+              <p className="hint">
+                当病例优先级为「危急」或状态进入「待复核」时发送通知。
+                同一病例对同一通知对象{NOTIFY_DUPLICATE_WINDOW_MINUTES}分钟内不可重复发送未确认通知。
+                未确认通知超过{NOTIFY_REMINDER_MINUTES}分钟将高亮提醒。
+              </p>
+            </form>
+
+            <section className="panel list-panel borrow-list-panel">
+              <div className="toolbar borrow-toolbar">
+                <div className="search">
+                  <Search size={16} />
+                  <input
+                    value={notifyFilters.query}
+                    onChange={(e) => setNotifyFilters({ ...notifyFilters, query: e.target.value })}
+                    placeholder="搜索病例号、通知对象、备注..."
+                  />
+                </div>
+                <select
+                  value={notifyFilters.status}
+                  onChange={(e) => setNotifyFilters({ ...notifyFilters, status: e.target.value })}
+                >
+                  {CRITICAL_NOTIFY_STATUS_LIST.map((s) => <option key={s}>{s}</option>)}
+                </select>
+                <select
+                  value={notifyFilters.priority}
+                  onChange={(e) => setNotifyFilters({ ...notifyFilters, priority: e.target.value })}
+                >
+                  <option value="全部">全部优先级</option>
+                  <option value="常规">常规</option>
+                  <option value="加急">加急</option>
+                  <option value="危急">危急</option>
+                </select>
+              </div>
+
+              <div className="borrow-list">
+                {filteredNotifies.length === 0 && (
+                  <div className="dispatch-empty">
+                    <Bell size={32} />
+                    <p>暂无符合条件的通知记录</p>
+                  </div>
+                )}
+                {filteredNotifies.map((item) => {
+                  const status = calcNotifyStatus(item);
+                  const overdue = isNotifyOverdue(item);
+                  const odMins = notifyOverdueMinutes(item);
+                  const mins = minutesSinceSent(item);
+                  const MethodIcon = notifyMethodIcon(item.notifyMethod);
+                  return (
+                    <article
+                      key={item.id}
+                      className={`borrow-card notify-card ${notifyStatusClass(status)} ${selectedNotifyForDetail?.id === item.id ? 'selected' : ''}`}
+                      onClick={() => {
+                        const caseRecord = records.find((r) => r.caseNo === item.caseNo || r.id === item.caseId);
+                        if (caseRecord) {
+                          setSelected(caseRecord);
+                        }
+                        setSelectedNotifyForDetail(selectedNotifyForDetail?.id === item.id ? null : item);
+                      }}
+                    >
+                      <div className="borrow-card-head">
+                        <div>
+                          <h3>{item.caseNo}</h3>
+                          <p>{item.notifyTarget} · {item.triggerReason}</p>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                          <span className={`status borrow-status ${notifyStatusClass(status)}`}>{status}</span>
+                          {item.priority && (
+                            <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
+                          )}
+                          {status === CRITICAL_NOTIFY_STATUS.PENDING && overdue && (
+                            <span className="borrow-overdue-badge">
+                              <Timer size={12} />
+                              超{odMins}分
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="borrow-card-times">
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">发送方式</span>
+                          <span className="borrow-time-value" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <MethodIcon size={13} />{item.notifyMethod}
+                          </span>
+                        </div>
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">发送时间</span>
+                          <span className="borrow-time-value">{formatDateTime(item.sentAt)}</span>
+                        </div>
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">确认时间</span>
+                          <span className={`borrow-time-value ${status === CRITICAL_NOTIFY_STATUS.PENDING ? 'notify-pending-text' : ''}`}>
+                            {item.confirmedAt ? formatDateTime(item.confirmedAt) : '未确认'}
+                          </span>
+                        </div>
+                      </div>
+                      {item.remark && (
+                        <p className="borrow-card-remark">{item.remark}</p>
+                      )}
+                      {item.confirmedBy && (
+                        <div className="notify-confirmed-by">
+                          <UserCheck size={13} />确认人：{item.confirmedBy}
+                        </div>
+                      )}
+                      <div className="borrow-card-actions" onClick={(e) => e.stopPropagation()}>
+                        {status === CRITICAL_NOTIFY_STATUS.PENDING && (
+                          <button
+                            className="wb-btn wb-btn-return"
+                            type="button"
+                            onClick={() => confirmNotify(item)}
+                          >
+                            <CheckCircle2 size={13} />确认收到
+                          </button>
+                        )}
+                        <button
+                          className="wb-btn"
+                          type="button"
+                          onClick={() => openNotifyModal(records.find((r) => r.caseNo === item.caseNo || r.id === item.caseId))}
+                        >
+                          <Bell size={13} />再次通知
+                        </button>
+                        <button
+                          className="ghost-danger wb-btn"
+                          type="button"
+                          onClick={() => removeNotifyRecord(item.id)}
+                        >
+                          <Trash2 size={13} />删除
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          </section>
+
+          {selectedNotifyForDetail && (
+            <section className="insights">
+              <div className="panel">
+                <div className="panel-title">
+                  <BellRing size={18} />
+                  <h2>通知详情</h2>
+                </div>
+                <div className="borrow-detail">
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">病例号</span>
+                    <span className="borrow-detail-value">{selectedNotifyForDetail.caseNo}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">通知对象</span>
+                    <span className="borrow-detail-value">{selectedNotifyForDetail.notifyTarget}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">通知方式</span>
+                    <span className="borrow-detail-value">{selectedNotifyForDetail.notifyMethod}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">触发原因</span>
+                    <span className="borrow-detail-value">{selectedNotifyForDetail.triggerReason}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">优先级</span>
+                    <span className="borrow-detail-value">{selectedNotifyForDetail.priority || '常规'}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">通知状态</span>
+                    <span className="borrow-detail-value">{calcNotifyStatus(selectedNotifyForDetail)}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">发送时间</span>
+                    <span className="borrow-detail-value">
+                      {selectedNotifyForDetail.sentAt ? new Date(selectedNotifyForDetail.sentAt).toLocaleString('zh-CN') : '-'}
+                    </span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">确认时间</span>
+                    <span className="borrow-detail-value">
+                      {selectedNotifyForDetail.confirmedAt ? new Date(selectedNotifyForDetail.confirmedAt).toLocaleString('zh-CN') : '未确认'}
+                    </span>
+                  </div>
+                  {selectedNotifyForDetail.confirmedBy && (
+                    <div className="borrow-detail-item">
+                      <span className="borrow-detail-label">确认人</span>
+                      <span className="borrow-detail-value">{selectedNotifyForDetail.confirmedBy}</span>
+                    </div>
+                  )}
+                  {selectedNotifyForDetail.remark && (
+                    <div className="borrow-detail-item wide">
+                      <span className="borrow-detail-label">处理备注</span>
+                      <span className="borrow-detail-value">{selectedNotifyForDetail.remark}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <aside className="panel detail-panel">
+                <div className="panel-title">
+                  <CheckCircle2 size={18} />
+                  <h2>关联病例详情</h2>
+                </div>
+                {selected ? (
+                  <div className="detail">
+                    <h3>{selected.caseNo}</h3>
+                    <p>{`${selected.sampleType} · ${selected.priority} · ${selected.doctor}`}</p>
+                    <p>{selected.summary}</p>
+
+                    {(() => {
+                      const caseNotifies = getCaseNotifies(selected.caseNo, selected.id);
+                      return (
+                        <div className="case-notify-section">
+                          <div className="panel-title" style={{ marginTop: '12px' }}>
+                            <Bell size={16} />
+                            <h2 style={{ fontSize: '16px' }}>通知记录 ({caseNotifies.length})</h2>
+                          </div>
+                          {caseNotifies.length === 0 ? (
+                            <p className="empty" style={{ padding: '12px' }}>暂无通知记录</p>
+                          ) : (
+                            <div className="case-notify-list">
+                              {caseNotifies.map((n) => {
+                                const ns = calcNotifyStatus(n);
+                                const MethodIcon = notifyMethodIcon(n.notifyMethod);
+                                return (
+                                  <div key={n.id} className={`case-notify-item notify-item-${notifyStatusClass(ns)}`}>
+                                    <div className="case-notify-head">
+                                      <span className={`notify-badge ${notifyStatusClass(ns)}`}>{ns}</span>
+                                      <span className="case-notify-meta">
+                                        <MethodIcon size={12} />{n.notifyMethod} · {n.notifyTarget}
+                                      </span>
+                                    </div>
+                                    <div className="case-notify-times">
+                                      <span>发送：{formatDateTime(n.sentAt)}</span>
+                                      {n.confirmedAt && <span>确认：{formatDateTime(n.confirmedAt)}</span>}
+                                    </div>
+                                    {n.remark && <div className="case-notify-remark">{n.remark}</div>}
+                                    {ns === CRITICAL_NOTIFY_STATUS.PENDING && (
+                                      <button
+                                        className="wb-btn wb-btn-return"
+                                        type="button"
+                                        style={{ marginTop: '8px', padding: '4px 10px', fontSize: '12px' }}
+                                        onClick={(e) => { e.stopPropagation(); confirmNotify(n); }}
+                                      >
+                                        <CheckCircle2 size={12} />确认收到
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {(selected.priority === '危急' || selected.status === '待复核') && (
+                            <button
+                              className="primary"
+                              type="button"
+                              style={{ marginTop: '12px' }}
+                              onClick={() => openNotifyModal(selected)}
+                            >
+                              <Bell size={16} />发送新通知
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    <div className="timeline">
+                      {getMergedTimelineWithNotify(selected).map((step, index) => {
+                        const isReview = step.type === 'review-status';
+                        const isSlideBorrow = step.type === 'slide-borrow';
+                        const isSlideReceive = step.type === 'slide-receive';
+                        const isSlideReturn = step.type === 'slide-return';
+                        const isSlideOverdue = step.type === 'slide-overdue';
+                        const isDispatch = step.status === '派单';
+                        const isNotifySent = step.type === 'critical-notify-sent';
+                        const isNotifyConfirmed = step.type === 'critical-notify-confirmed';
+
+                        let displayText = `${step.at} · `;
+                        if (isReview || step.type === 'review-status') {
+                          displayText += step.status || '状态变更';
+                        } else {
+                          displayText += step.event || '事件';
+                        }
+
+                        if (isDispatch && step.fromDoctor && step.toDoctor) {
+                          displayText += `：${step.fromDoctor} → ${step.toDoctor}`;
+                        }
+                        if (isSlideBorrow && step.department) {
+                          displayText += `（${step.department}）`;
+                        }
+                        if (isSlideOverdue && step.borrower) {
+                          displayText += `（借阅人：${step.borrower}）`;
+                        }
+                        if (isNotifySent && step.notifyTarget) {
+                          displayText += `（${step.triggerReason || ''}→${step.notifyTarget}/${step.notifyMethod}）`;
+                        }
+                        if (isNotifyConfirmed && step.notifyTarget) {
+                          displayText += `（${step.notifyMethod}→${step.notifyTarget}）`;
+                        }
+
+                        displayText += ` · ${step.by}`;
+
+                        return (
+                          <span
+                            key={index}
+                            className={`
+                              ${isReview && step.status === '复核意见' ? 'timeline-review' : ''}
+                              ${isDispatch ? 'timeline-dispatch' : ''}
+                              ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
+                              ${isSlideReceive ? 'timeline-slide-receive' : ''}
+                              ${isSlideReturn ? 'timeline-slide-return' : ''}
+                              ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
+                              ${isNotifySent ? 'timeline-notify-sent' : ''}
+                              ${isNotifyConfirmed ? 'timeline-notify-confirmed' : ''}
+                            `}
+                          >
+                            {displayText}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="empty">点击左侧通知记录查看关联病例详情。</p>
+                )}
+              </aside>
+            </section>
+          )}
+        </>
+      )}
+
+      {showNotifyModal && (
+        <div className="batch-overlay" onClick={closeNotifyModal}>
+          <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <BellRing size={18} />
+                <h2>创建危急通知</h2>
+              </div>
+              <button className="batch-close" onClick={closeNotifyModal}><X size={18} /></button>
+            </div>
+            <div className="batch-body">
+              <form onSubmit={handleNotifySubmit}>
+                <div className="form-grid">
+                  <label className="wide">
+                    <span><FileText size={13} />病例号</span>
+                    <input
+                      type="text"
+                      value={notifyForm.caseNo}
+                      onChange={(e) => {
+                        setNotifyForm({ ...notifyForm, caseNo: e.target.value });
+                        const matched = records.find((r) => r.caseNo === e.target.value.trim());
+                        if (matched) {
+                          setNotifyForm((prev) => ({
+                            ...prev,
+                            caseId: matched.id,
+                            notifyTarget: matched.doctor || prev.notifyTarget
+                          }));
+                        }
+                        setTimeout(checkNotifyDuplicate, 50);
+                      }}
+                      placeholder="请输入病例号"
+                      list="modal-notify-case-list"
+                      required
+                    />
+                    <datalist id="modal-notify-case-list">
+                      {records
+                        .filter((r) => r.priority === '危急' || r.status === '待复核')
+                        .map((r) => (
+                          <option key={r.id} value={r.caseNo}>
+                            {r.caseNo} - {r.doctor} ({r.priority}/{r.status})
+                          </option>
+                        ))}
+                    </datalist>
+                  </label>
+                  <label className="wide">
+                    <span><UserCheck size={13} />通知对象</span>
+                    <input
+                      type="text"
+                      value={notifyForm.notifyTarget}
+                      onChange={(e) => {
+                        setNotifyForm({ ...notifyForm, notifyTarget: e.target.value });
+                        setTimeout(checkNotifyDuplicate, 50);
+                      }}
+                      placeholder="请输入通知对象姓名或岗位"
+                      list="modal-notify-target-list"
+                      required
+                    />
+                    <datalist id="modal-notify-target-list">
+                      {NOTIFY_TARGET_PRESETS.map((p) => <option key={p} value={p} />)}
+                      {doctorList.map((d) => <option key={d} value={d} />)}
+                    </datalist>
+                  </label>
+                  <label>
+                    <span><Phone size={13} />通知方式</span>
+                    <select
+                      value={notifyForm.notifyMethod}
+                      onChange={(e) => setNotifyForm({ ...notifyForm, notifyMethod: e.target.value })}
+                    >
+                      {CRITICAL_NOTIFY_METHODS.map((m) => <option key={m}>{m}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span><CalendarClock size={13} />发送时间</span>
+                    <input
+                      type="datetime-local"
+                      value={notifyForm.sentAt}
+                      onChange={(e) => setNotifyForm({ ...notifyForm, sentAt: e.target.value })}
+                      required
+                    />
+                  </label>
+                  <label className="wide">
+                    <span><AlertTriangle size={13} />触发原因</span>
+                    <select
+                      value={notifyForm.triggerReason}
+                      onChange={(e) => setNotifyForm({ ...notifyForm, triggerReason: e.target.value })}
+                    >
+                      {CRITICAL_NOTIFY_REASONS.map((r) => <option key={r}>{r}</option>)}
+                    </select>
+                  </label>
+                  <label className="wide">
+                    <span><ClipboardList size={13} />处理备注</span>
+                    <textarea
+                      value={notifyForm.remark}
+                      onChange={(e) => setNotifyForm({ ...notifyForm, remark: e.target.value })}
+                      placeholder="请输入通知内容或处理备注（选填）"
+                      rows={3}
+                    />
+                  </label>
+                </div>
+                {notifyDuplicateWarning && (
+                  <div className="notify-duplicate-warning">
+                    <AlertTriangle size={16} />
+                    <span>{notifyDuplicateWarning}</span>
+                  </div>
+                )}
+                <div className="batch-actions">
+                  <button
+                    className="primary"
+                    type="submit"
+                    disabled={!notifyForm.caseNo.trim() || !notifyForm.notifyTarget.trim() || !notifyForm.sentAt || !!notifyDuplicateWarning}
+                  >
+                    <Send size={16} />发送通知
+                  </button>
+                  <button className="secondary" type="button" onClick={closeNotifyModal}>
+                    <X size={16} />取消
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
       )}
 
       {showDispatchConfirm && (
