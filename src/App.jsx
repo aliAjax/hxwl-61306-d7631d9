@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -386,6 +386,13 @@ function App() {
   const [reviewEditing, setReviewEditing] = useState(false);
   const [tatFilters, setTatFilters] = useState({ doctor: '全部', status: '全部', tatStatus: '全部' });
   const [showTatBoard, setShowTatBoard] = useState(false);
+  const [activeView, setActiveView] = useState('workbench');
+  const [dispatchFilters, setDispatchFilters] = useState({ query: '', priority: '全部', sampleType: '全部' });
+  const [selectedCases, setSelectedCases] = useState(new Set());
+  const [selectedDoctor, setSelectedDoctor] = useState('');
+  const [dispatchResult, setDispatchResult] = useState(null);
+  const [showDispatchConfirm, setShowDispatchConfirm] = useState(false);
+  const [selectedDoctorForDetail, setSelectedDoctorForDetail] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -576,6 +583,147 @@ function App() {
     setBatchParsed([]);
   }
 
+  function toggleCaseSelection(caseId) {
+    const next = new Set(selectedCases);
+    if (next.has(caseId)) {
+      next.delete(caseId);
+    } else {
+      next.add(caseId);
+    }
+    setSelectedCases(next);
+  }
+
+  function toggleSelectAllVisible() {
+    const visibleIds = allDispatchableCases.map((item) => item.id);
+    const allSelected = visibleIds.every((id) => selectedCases.has(id));
+    if (allSelected) {
+      const next = new Set(selectedCases);
+      visibleIds.forEach((id) => next.delete(id));
+      setSelectedCases(next);
+    } else {
+      const next = new Set(selectedCases);
+      visibleIds.forEach((id) => next.add(id));
+      setSelectedCases(next);
+    }
+  }
+
+  function clearSelection() {
+    setSelectedCases(new Set());
+    setSelectedDoctor('');
+    setDispatchResult(null);
+  }
+
+  function handleDispatch() {
+    if (selectedCases.size === 0) return;
+    if (selectedDoctor === '__new__') {
+      const newDoctor = prompt('请输入新医生姓名：');
+      if (newDoctor && newDoctor.trim()) {
+        setSelectedDoctor(newDoctor.trim());
+        setShowDispatchConfirm(true);
+      }
+      return;
+    }
+    if (!selectedDoctor.trim()) return;
+    setShowDispatchConfirm(true);
+  }
+
+  function confirmDispatch() {
+    if (selectedCases.size === 0 || !selectedDoctor.trim()) {
+      setShowDispatchConfirm(false);
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const targetDoctor = selectedDoctor.trim();
+    const success = [];
+    const failed = [];
+    const skipped = [];
+
+    const next = records.map((item) => {
+      if (!selectedCases.has(item.id)) return item;
+
+      if (item.doctor && item.doctor.trim() === targetDoctor && item.status !== '已完成') {
+        skipped.push({
+          caseNo: item.caseNo,
+          reason: `已由${targetDoctor}负责`
+        });
+        return item;
+      }
+
+      if (item.status === '阅片中' || item.status === '待复核' || item.status === '已完成') {
+        skipped.push({
+          caseNo: item.caseNo,
+          reason: `当前状态为「${item.status}」，不可重新派单`
+        });
+        return item;
+      }
+
+      try {
+        const updatedItem = {
+          ...item,
+          doctor: targetDoctor,
+          timeline: [
+            ...(item.timeline || []),
+            {
+              status: '派单',
+              at: today,
+              by: '调度员',
+              changedAt: now,
+              action: 'assign',
+              fromDoctor: item.doctor || '未分配',
+              toDoctor: targetDoctor
+            }
+          ]
+        };
+        success.push({ caseNo: item.caseNo });
+        return updatedItem;
+      } catch (error) {
+        failed.push({
+          caseNo: item.caseNo,
+          reason: error.message || '系统错误'
+        });
+        return item;
+      }
+    });
+
+    persist(next);
+
+    setDispatchResult({
+      success: success.length,
+      failed: failed.length,
+      skipped: skipped.length,
+      successList: success,
+      failedList: failed,
+      skippedList: skipped,
+      targetDoctor
+    });
+
+    if (success.length > 0) {
+      const successIds = new Set(success.map((s) => s.caseNo));
+      const remaining = new Set(selectedCases);
+      records.forEach((item) => {
+        if (successIds.has(item.caseNo)) {
+          remaining.delete(item.id);
+        }
+      });
+      setSelectedCases(remaining);
+    }
+
+    setShowDispatchConfirm(false);
+  }
+
+  function cancelDispatch() {
+    setShowDispatchConfirm(false);
+  }
+
+  function handleViewChange(view) {
+    setActiveView(view);
+    setSelectedCases(new Set());
+    setSelectedDoctor('');
+    setDispatchResult(null);
+    setDispatchFilters({ query: '', priority: '全部', sampleType: '全部' });
+  }
+
   function persist(next) {
     setRecords(next);
     localStorage.setItem(appConfig.storage, JSON.stringify(next));
@@ -707,6 +855,78 @@ function App() {
     return Array.from(doctors).sort();
   }, [records]);
 
+  const sampleTypeList = useMemo(() => {
+    const types = new Set();
+    records.forEach((item) => {
+      if (item.sampleType) types.add(item.sampleType);
+    });
+    return Array.from(types).sort();
+  }, [records]);
+
+  const doctorWorkload = useMemo(() => {
+    void tick;
+    const workload = {};
+    records.forEach((item) => {
+      if (!item.doctor) return;
+      if (!workload[item.doctor]) {
+        workload[item.doctor] = {
+          doctor: item.doctor,
+          pending: 0,
+          reading: 0,
+          reviewing: 0,
+          total: 0,
+          cases: []
+        };
+      }
+      workload[item.doctor].total++;
+      workload[item.doctor].cases.push(item);
+      if (item.status === '待阅片') workload[item.doctor].pending++;
+      else if (item.status === '阅片中') workload[item.doctor].reading++;
+      else if (item.status === '待复核') workload[item.doctor].reviewing++;
+    });
+    return Object.values(workload).sort((a, b) => b.total - a.total);
+  }, [records, tick]);
+
+  const unassignedCases = useMemo(() => {
+    void tick;
+    return records
+      .filter((item) => !item.doctor || item.doctor.trim() === '')
+      .filter((item) => !dispatchFilters.query || `${item.caseNo}${item.summary}`.includes(dispatchFilters.query))
+      .filter((item) => dispatchFilters.priority === '全部' || item.priority === dispatchFilters.priority)
+      .filter((item) => dispatchFilters.sampleType === '全部' || item.sampleType === dispatchFilters.sampleType)
+      .sort((a, b) => {
+        const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        if (rankDiff !== 0) return rankDiff;
+        const aTime = a.sentAt || a.createdAt || '';
+        const bTime = b.sentAt || b.createdAt || '';
+        return String(aTime).localeCompare(String(bTime));
+      });
+  }, [records, dispatchFilters, tick]);
+
+  const pendingReassignCases = useMemo(() => {
+    void tick;
+    return records
+      .filter((item) => item.doctor && item.status === '待阅片')
+      .filter((item) => !dispatchFilters.query || `${item.caseNo}${item.doctor}${item.summary}`.includes(dispatchFilters.query))
+      .filter((item) => dispatchFilters.priority === '全部' || item.priority === dispatchFilters.priority)
+      .filter((item) => dispatchFilters.sampleType === '全部' || item.sampleType === dispatchFilters.sampleType)
+      .sort((a, b) => {
+        const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        if (rankDiff !== 0) return rankDiff;
+        const aTime = a.sentAt || a.createdAt || '';
+        const bTime = b.sentAt || b.createdAt || '';
+        return String(aTime).localeCompare(String(bTime));
+      });
+  }, [records, dispatchFilters, tick]);
+
+  const allDispatchableCases = useMemo(() => {
+    return [...unassignedCases, ...pendingReassignCases];
+  }, [unassignedCases, pendingReassignCases]);
+
+  const selectedCasesData = useMemo(() => {
+    return records.filter((item) => selectedCases.has(item.id));
+  }, [records, selectedCases]);
+
   const tatFilteredRecords = useMemo(() => {
     void tick;
     return records
@@ -782,6 +1002,25 @@ function App() {
         </div>
       </section>
 
+      <section className="view-tabs">
+        <button
+          className={`view-tab ${activeView === 'workbench' ? 'active' : ''}`}
+          onClick={() => handleViewChange('workbench')}
+        >
+          <Layers size={16} />
+          阅片工作台
+        </button>
+        <button
+          className={`view-tab ${activeView === 'dispatch' ? 'active' : ''}`}
+          onClick={() => handleViewChange('dispatch')}
+        >
+          <UserPlus size={16} />
+          医生派单与负荷
+        </button>
+      </section>
+
+      {activeView === 'workbench' && (
+        <>
       <section className="metrics">
         {metrics.map((metric) => (
           <article className="metric" key={metric.label}>
@@ -1277,12 +1516,21 @@ function App() {
               <div className="timeline">
                 {(selected.timeline || []).map((step, index) => {
                   const isReview = step.status === '复核意见';
+                  const isDispatch = step.status === '派单';
                   const reviewForStep = isReview
                     ? (selected.reviews || []).find((r) => r.id === step.reviewId)
                     : null;
+                  let displayText = `${step.at} · ${step.status}`;
+                  if (isReview && reviewForStep) {
+                    displayText += `（${reviewForStep.conclusion}）`;
+                  }
+                  if (isDispatch && step.fromDoctor && step.toDoctor) {
+                    displayText += `：${step.fromDoctor} → ${step.toDoctor}`;
+                  }
+                  displayText += ` · ${step.by}`;
                   return (
-                    <span key={index} className={isReview ? 'timeline-review' : ''}>
-                      {step.at} · {step.status}{isReview && reviewForStep ? `（${reviewForStep.conclusion}）` : ''} · {step.by}
+                    <span key={index} className={`${isReview ? 'timeline-review' : ''} ${isDispatch ? 'timeline-dispatch' : ''}`}>
+                      {displayText}
                     </span>
                   );
                 })}
@@ -1293,6 +1541,339 @@ function App() {
           )}
         </aside>
       </section>
+        </>
+      )}
+
+      {activeView === 'dispatch' && (
+        <>
+          <section className="dispatch-workload">
+            <div className="dispatch-header">
+              <div className="eyebrow"><Users size={18} />医生负荷概览</div>
+              <div className="dispatch-summary">
+                <span className="dispatch-summary-item"><strong>{unassignedCases.length}</strong> 条未分配</span>
+                <span className="dispatch-summary-item"><strong>{pendingReassignCases.length}</strong> 条可改派</span>
+                <span className="dispatch-summary-item"><strong>{doctorWorkload.length}</strong> 位医生</span>
+              </div>
+            </div>
+            <div className="workload-grid">
+              {doctorWorkload.length === 0 && (
+                <div className="workload-empty">
+                  <Users size={32} />
+                  <p>暂无医生负荷数据</p>
+                </div>
+              )}
+              {doctorWorkload.map((wl) => (
+                <div
+                  key={wl.doctor}
+                  className={`workload-card ${selectedDoctorForDetail === wl.doctor ? 'selected' : ''}`}
+                  onClick={() => setSelectedDoctorForDetail(selectedDoctorForDetail === wl.doctor ? null : wl.doctor)}
+                >
+                  <div className="workload-card-header">
+                    <div className="workload-doctor">
+                      <div className="workload-avatar">{wl.doctor.slice(0, 1)}</div>
+                      <div>
+                        <h3>{wl.doctor}</h3>
+                        <p>共 {wl.total} 条病例</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="workload-stats">
+                    <div className="workload-stat pending">
+                      <span className="stat-label">待阅片</span>
+                      <strong>{wl.pending}</strong>
+                    </div>
+                    <div className="workload-stat reading">
+                      <span className="stat-label">阅片中</span>
+                      <strong>{wl.reading}</strong>
+                    </div>
+                    <div className="workload-stat reviewing">
+                      <span className="stat-label">待复核</span>
+                      <strong>{wl.reviewing}</strong>
+                    </div>
+                  </div>
+                  {selectedDoctorForDetail === wl.doctor && (
+                    <div className="workload-detail">
+                      <div className="workload-detail-title">
+                        <Info size={14} />
+                        负责病例列表
+                      </div>
+                      <div className="workload-cases">
+                        {wl.cases.slice(0, 5).map((item) => (
+                          <div key={item.id} className="workload-case-item">
+                            <span>{item.caseNo}</span>
+                            <span className={`status ${statusClass(item.status)}`}>{item.status}</span>
+                          </div>
+                        ))}
+                        {wl.cases.length > 5 && (
+                          <div className="workload-case-more">还有 {wl.cases.length - 5} 条...</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="dispatch-main">
+            <div className="panel">
+              <div className="panel-title">
+                <Send size={18} />
+                <h2>病例派单</h2>
+              </div>
+
+              <div className="dispatch-toolbar">
+                <div className="dispatch-filters">
+                  <div className="search">
+                    <Search size={16} />
+                    <input
+                      value={dispatchFilters.query}
+                      onChange={(e) => setDispatchFilters({ ...dispatchFilters, query: e.target.value })}
+                      placeholder="搜索病例号、备注..."
+                    />
+                  </div>
+                  <select
+                    value={dispatchFilters.priority}
+                    onChange={(e) => setDispatchFilters({ ...dispatchFilters, priority: e.target.value })}
+                  >
+                    <option>全部优先级</option>
+                    <option>常规</option>
+                    <option>加急</option>
+                    <option>危急</option>
+                  </select>
+                  <select
+                    value={dispatchFilters.sampleType}
+                    onChange={(e) => setDispatchFilters({ ...dispatchFilters, sampleType: e.target.value })}
+                  >
+                    <option>全部标本类型</option>
+                    {sampleTypeList.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="dispatch-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={toggleSelectAllVisible}
+                    disabled={allDispatchableCases.length === 0}
+                  >
+                    {allDispatchableCases.length > 0 && allDispatchableCases.every((c) => selectedCases.has(c.id)) ? (
+                      <><CheckSquare size={14} />取消全选</>
+                    ) : (
+                      <><Square size={14} />全选当前</>
+                    )}
+                  </button>
+                  {selectedCases.size > 0 && (
+                    <button className="secondary" type="button" onClick={clearSelection}>
+                      <X size={14} />清除选择
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {selectedCases.size > 0 && (
+                <div className="dispatch-selection-bar">
+                  <div className="selection-info">
+                    <CheckSquare size={16} />
+                    <span>已选择 <strong>{selectedCases.size}</strong> 条病例</span>
+                    {selectedCasesData.some((c) => c.doctor) && (
+                      <span className="selection-hint">
+                        (含 {selectedCasesData.filter((c) => c.doctor).length} 条改派)
+                      </span>
+                    )}
+                  </div>
+                  <div className="dispatch-assign">
+                    <select
+                      value={selectedDoctor}
+                      onChange={(e) => setSelectedDoctor(e.target.value)}
+                      className="doctor-select"
+                    >
+                      <option value="">选择目标医生...</option>
+                      {doctorList.map((d) => {
+                        const wl = doctorWorkload.find((w) => w.doctor === d);
+                        return (
+                          <option key={d} value={d}>
+                            {d} (待阅{wl?.pending || 0} / 阅中{wl?.reading || 0} / 待复{wl?.reviewing || 0})
+                          </option>
+                        );
+                      })}
+                      <option value="__new__">+ 新医生...</option>
+                    </select>
+                    <button
+                      className="primary"
+                      type="button"
+                      onClick={handleDispatch}
+                      disabled={!selectedDoctor.trim()}
+                    >
+                      <Send size={16} />
+                      批量派单
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {dispatchResult && (
+                <div className={`dispatch-result ${dispatchResult.failed > 0 || dispatchResult.skipped > 0 ? 'has-warnings' : ''}`}>
+                  <div className="dispatch-result-header">
+                    <CheckCircle2 size={18} />
+                    <span>派单完成</span>
+                    <button className="result-close" onClick={() => setDispatchResult(null)}><X size={14} /></button>
+                  </div>
+                  <div className="dispatch-result-stats">
+                    <span className="result-success">成功 {dispatchResult.success} 条</span>
+                    {dispatchResult.skipped > 0 && (
+                      <span className="result-skipped">跳过 {dispatchResult.skipped} 条</span>
+                    )}
+                    {dispatchResult.failed > 0 && (
+                      <span className="result-failed">失败 {dispatchResult.failed} 条</span>
+                    )}
+                  </div>
+                  {(dispatchResult.skippedList.length > 0 || dispatchResult.failedList.length > 0) && (
+                    <div className="dispatch-result-details">
+                      {dispatchResult.skippedList.length > 0 && (
+                        <div className="result-detail-group">
+                          <div className="result-detail-title">跳过的病例：</div>
+                          {dispatchResult.skippedList.map((item, idx) => (
+                            <div key={idx} className="result-detail-item skipped">
+                              <span>{item.caseNo}</span>
+                              <span className="detail-reason">{item.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {dispatchResult.failedList.length > 0 && (
+                        <div className="result-detail-group">
+                          <div className="result-detail-title">失败的病例：</div>
+                          {dispatchResult.failedList.map((item, idx) => (
+                            <div key={idx} className="result-detail-item failed">
+                              <span>{item.caseNo}</span>
+                              <span className="detail-reason">{item.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="dispatch-tabs">
+                <div className="dispatch-tab active">
+                  未分配 <span className="tab-count">{unassignedCases.length}</span>
+                </div>
+                <div className="dispatch-tab">
+                  待阅片可改派 <span className="tab-count">{pendingReassignCases.length}</span>
+                </div>
+              </div>
+
+              <div className="dispatch-list">
+                {allDispatchableCases.length === 0 && (
+                  <div className="dispatch-empty">
+                    <Layers size={32} />
+                    <p>暂无符合条件的病例</p>
+                  </div>
+                )}
+                {allDispatchableCases.map((item) => {
+                  const tat = calcTatInfo(item);
+                  const isSelected = selectedCases.has(item.id);
+                  const isReassign = !!item.doctor;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`dispatch-case ${isSelected ? 'selected' : ''} ${isReassign ? 'reassign' : ''}`}
+                      onClick={() => toggleCaseSelection(item.id)}
+                    >
+                      <div className="case-checkbox">
+                        {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
+                      </div>
+                      <div className="case-main">
+                        <div className="case-header">
+                          <h3>{item.caseNo}</h3>
+                          <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
+                          {isReassign && (
+                            <span className="reassign-tag">
+                              <UserCheck size={12} />
+                              当前：{item.doctor}
+                            </span>
+                          )}
+                          {!isReassign && (
+                            <span className="unassigned-tag">未分配</span>
+                          )}
+                        </div>
+                        <div className="case-meta">
+                          <span>{item.sampleType}</span>
+                          <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                          {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
+                            <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
+                              {tatStatusLabel(tat.status)}
+                            </span>
+                          )}
+                        </div>
+                        {item.summary && <p className="case-summary">{item.summary}</p>}
+                        <div className="case-footer">
+                          <span className="case-time">
+                            <Clock size={12} />
+                            送检：{item.sentAt ? new Date(item.sentAt).toLocaleString('zh-CN') : '未填写'}
+                          </span>
+                          <span className="case-wait">
+                            等待：{waitDuration(item)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
+      {showDispatchConfirm && (
+        <div className="batch-overlay" onClick={cancelDispatch}>
+          <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <Send size={18} />
+                <h2>确认批量派单</h2>
+              </div>
+              <button className="batch-close" onClick={cancelDispatch}><X size={18} /></button>
+            </div>
+            <div className="batch-body">
+              <div className="confirm-info">
+                <p>即将把 <strong>{selectedCases.size}</strong> 条病例派给 <strong>{selectedDoctor}</strong></p>
+                <div className="confirm-preview">
+                  {selectedCasesData.slice(0, 5).map((item) => (
+                    <div key={item.id} className="confirm-item">
+                      <span>{item.caseNo}</span>
+                      <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
+                      <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                    </div>
+                  ))}
+                  {selectedCasesData.length > 5 && (
+                    <div className="confirm-more">还有 {selectedCasesData.length - 5} 条...</div>
+                  )}
+                </div>
+                <div className="confirm-warnings">
+                  <AlertTriangle size={16} />
+                  <div>
+                    <p>系统将自动跳过：</p>
+                    <ul>
+                      <li>已由 {selectedDoctor} 负责的病例</li>
+                      <li>状态为「阅片中」「待复核」「已完成」的病例</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <div className="batch-actions">
+                <button className="primary" type="button" onClick={confirmDispatch}>
+                  <CheckCircle2 size={16} />确认派单
+                </button>
+                <button className="secondary" type="button" onClick={cancelDispatch}>取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {batchOpen && (
         <div className="batch-overlay" onClick={handleBatchClose}>
