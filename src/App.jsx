@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2 } from 'lucide-react';
 import './App.css';
 
 const appConfig = {
@@ -145,6 +145,54 @@ const appConfig = {
   }
 };
 
+const SLIDE_BORROW_STORAGE = 'hxwl-61306-slide-borrow';
+const SLIDE_BORROW_STATUS = {
+  BORROWED: '已借出',
+  RECEIVED: '已接收',
+  RETURNED: '已归还',
+  OVERDUE: '已逾期'
+};
+
+const SLIDE_BORROW_STATUS_LIST = ['全部', '已借出', '已接收', '已归还', '已逾期'];
+
+const SLIDE_BORROW_SEED = [
+  {
+    caseNo: 'P2026061301',
+    borrower: '张医生',
+    department: '外科',
+    borrowTime: '2026-06-12T09:00',
+    receiveTime: '2026-06-12T10:30',
+    expectedReturnTime: '2026-06-14T17:00',
+    actualReturnTime: '',
+    status: '已借出',
+    remark: '会诊用玻片，需仔细观察切缘'
+  },
+  {
+    caseNo: 'P2026061208',
+    borrower: '王医生',
+    department: '内科',
+    borrowTime: '2026-06-10T14:00',
+    receiveTime: '2026-06-10T15:20',
+    expectedReturnTime: '2026-06-12T17:00',
+    actualReturnTime: '',
+    status: '已逾期',
+    remark: '教学查房用'
+  },
+  {
+    caseNo: 'P2026061117',
+    borrower: '刘医生',
+    department: '病理科',
+    borrowTime: '2026-06-11T08:30',
+    receiveTime: '2026-06-11T09:00',
+    expectedReturnTime: '2026-06-13T17:00',
+    actualReturnTime: '2026-06-13T16:30',
+    status: '已归还',
+    remark: '复核完成'
+  }
+];
+
+const DEFAULT_DEPARTMENTS = ['病理科', '外科', '内科', '肿瘤科', '妇产科', '儿科', '骨科', '皮肤科', '眼科', '耳鼻喉科'];
+
 const today = new Date().toISOString().slice(0, 10);
 
 function uid() {
@@ -165,6 +213,110 @@ function loadRecords() {
     }
   }
   return withIds(appConfig.seed);
+}
+
+function loadSlideBorrows() {
+  const raw = localStorage.getItem(SLIDE_BORROW_STORAGE);
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      return data.map((item) => ({ ...item, id: item.id || uid() }));
+    } catch {
+      return withBorrowIds(SLIDE_BORROW_SEED);
+    }
+  }
+  return withBorrowIds(SLIDE_BORROW_SEED);
+}
+
+function withBorrowIds(items) {
+  return items.map((item) => ({
+    id: uid(),
+    timeline: item.timeline || buildBorrowTimeline(item),
+    ...item
+  }));
+}
+
+function buildBorrowTimeline(item) {
+  const timeline = [];
+  if (item.borrowTime) {
+    timeline.push({
+      type: 'slide-borrow',
+      event: '玻片借出',
+      at: formatDateShort(item.borrowTime),
+      by: item.borrower || '系统',
+      changedAt: item.borrowTime,
+      department: item.department
+    });
+  }
+  if (item.receiveTime) {
+    timeline.push({
+      type: 'slide-receive',
+      event: '玻片接收',
+      at: formatDateShort(item.receiveTime),
+      by: item.borrower || '借阅人',
+      changedAt: item.receiveTime
+    });
+  }
+  if (item.actualReturnTime) {
+    timeline.push({
+      type: 'slide-return',
+      event: '玻片归还',
+      at: formatDateShort(item.actualReturnTime),
+      by: '病理科',
+      changedAt: item.actualReturnTime
+    });
+  }
+  return timeline;
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+function calcBorrowStatus(item) {
+  if (item.status === SLIDE_BORROW_STATUS.RETURNED) {
+    return SLIDE_BORROW_STATUS.RETURNED;
+  }
+  const now = new Date().getTime();
+  const expected = new Date(item.expectedReturnTime).getTime();
+  if (!item.actualReturnTime && now > expected) {
+    return SLIDE_BORROW_STATUS.OVERDUE;
+  }
+  if (item.receiveTime) {
+    return SLIDE_BORROW_STATUS.RECEIVED;
+  }
+  return SLIDE_BORROW_STATUS.BORROWED;
+}
+
+function isOverdue(item) {
+  if (item.status === SLIDE_BORROW_STATUS.RETURNED) return false;
+  const now = new Date().getTime();
+  const expected = new Date(item.expectedReturnTime).getTime();
+  return now > expected;
+}
+
+function overdueDays(item) {
+  if (!isOverdue(item)) return 0;
+  const now = new Date().getTime();
+  const expected = new Date(item.expectedReturnTime).getTime();
+  return Math.ceil((now - expected) / (1000 * 60 * 60 * 24));
+}
+
+function borrowStatusClass(status) {
+  switch (status) {
+    case SLIDE_BORROW_STATUS.BORROWED:
+      return 'borrow-status-borrowed';
+    case SLIDE_BORROW_STATUS.RECEIVED:
+      return 'borrow-status-received';
+    case SLIDE_BORROW_STATUS.RETURNED:
+      return 'borrow-status-returned';
+    case SLIDE_BORROW_STATUS.OVERDUE:
+      return 'borrow-status-overdue';
+    default:
+      return 'borrow-status-borrowed';
+  }
 }
 
 function avg(numbers) {
@@ -393,6 +545,21 @@ function App() {
   const [dispatchResult, setDispatchResult] = useState(null);
   const [showDispatchConfirm, setShowDispatchConfirm] = useState(false);
   const [selectedDoctorForDetail, setSelectedDoctorForDetail] = useState(null);
+  const [slideBorrows, setSlideBorrows] = useState(loadSlideBorrows);
+  const [slideBorrowFilters, setSlideBorrowFilters] = useState({ query: '', status: '全部', department: '全部' });
+  const [showBorrowModal, setShowBorrowModal] = useState(false);
+  const [editingBorrow, setEditingBorrow] = useState(null);
+  const [borrowForm, setBorrowForm] = useState({
+    caseNo: '',
+    borrower: '',
+    department: '病理科',
+    borrowTime: '',
+    receiveTime: '',
+    expectedReturnTime: '',
+    actualReturnTime: '',
+    remark: ''
+  });
+  const [selectedBorrowForDetail, setSelectedBorrowForDetail] = useState(null);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -722,12 +889,268 @@ function App() {
     setSelectedDoctor('');
     setDispatchResult(null);
     setDispatchFilters({ query: '', priority: '全部', sampleType: '全部' });
+    setSelectedBorrowForDetail(null);
   }
 
   function persist(next) {
     setRecords(next);
     localStorage.setItem(appConfig.storage, JSON.stringify(next));
   }
+
+  function persistBorrows(next) {
+    setSlideBorrows(next);
+    localStorage.setItem(SLIDE_BORROW_STORAGE, JSON.stringify(next));
+  }
+
+  function openBorrowModal(item = null) {
+    if (item) {
+      setEditingBorrow(item);
+      setBorrowForm({
+        caseNo: item.caseNo || '',
+        borrower: item.borrower || '',
+        department: item.department || '病理科',
+        borrowTime: item.borrowTime || '',
+        receiveTime: item.receiveTime || '',
+        expectedReturnTime: item.expectedReturnTime || '',
+        actualReturnTime: item.actualReturnTime || '',
+        remark: item.remark || ''
+      });
+    } else {
+      setEditingBorrow(null);
+      setBorrowForm({
+        caseNo: '',
+        borrower: '',
+        department: '病理科',
+        borrowTime: new Date().toISOString().slice(0, 16),
+        receiveTime: '',
+        expectedReturnTime: '',
+        actualReturnTime: '',
+        remark: ''
+      });
+    }
+    setShowBorrowModal(true);
+  }
+
+  function closeBorrowModal() {
+    setShowBorrowModal(false);
+    setEditingBorrow(null);
+  }
+
+  function handleBorrowSubmit(e) {
+    e.preventDefault();
+    if (!borrowForm.caseNo.trim() || !borrowForm.borrower.trim() || !borrowForm.borrowTime || !borrowForm.expectedReturnTime) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    let newStatus = SLIDE_BORROW_STATUS.BORROWED;
+    if (borrowForm.actualReturnTime) {
+      newStatus = SLIDE_BORROW_STATUS.RETURNED;
+    } else if (borrowForm.receiveTime) {
+      newStatus = SLIDE_BORROW_STATUS.RECEIVED;
+    }
+
+    const timeline = [];
+    if (borrowForm.borrowTime) {
+      timeline.push({
+        type: 'slide-borrow',
+        event: '玻片借出',
+        at: formatDateShort(borrowForm.borrowTime),
+        by: borrowForm.borrower,
+        changedAt: borrowForm.borrowTime,
+        department: borrowForm.department
+      });
+    }
+    if (borrowForm.receiveTime) {
+      timeline.push({
+        type: 'slide-receive',
+        event: '玻片接收',
+        at: formatDateShort(borrowForm.receiveTime),
+        by: borrowForm.borrower,
+        changedAt: borrowForm.receiveTime
+      });
+    }
+    if (borrowForm.actualReturnTime) {
+      timeline.push({
+        type: 'slide-return',
+        event: '玻片归还',
+        at: formatDateShort(borrowForm.actualReturnTime),
+        by: '病理科',
+        changedAt: borrowForm.actualReturnTime
+      });
+    }
+
+    if (editingBorrow) {
+      const next = slideBorrows.map((item) =>
+        item.id === editingBorrow.id
+          ? {
+              ...item,
+              ...borrowForm,
+              status: newStatus,
+              timeline,
+              updatedAt: now
+            }
+          : item
+      );
+      persistBorrows(next);
+    } else {
+      const newRecord = {
+        id: uid(),
+        ...borrowForm,
+        status: newStatus,
+        timeline,
+        createdAt: now
+      };
+      persistBorrows([newRecord, ...slideBorrows]);
+    }
+
+    closeBorrowModal();
+  }
+
+  function handleReturnSlide(item) {
+    const now = new Date().toISOString();
+    const returnTime = now;
+    const next = slideBorrows.map((b) =>
+      b.id === item.id
+        ? {
+            ...b,
+            actualReturnTime: returnTime,
+            status: SLIDE_BORROW_STATUS.RETURNED,
+            timeline: [
+              ...(b.timeline || []),
+              {
+                type: 'slide-return',
+                event: '玻片归还',
+                at: formatDateShort(returnTime),
+                by: '病理科',
+                changedAt: returnTime
+              }
+            ]
+          }
+        : b
+    );
+    persistBorrows(next);
+  }
+
+  function handleReceiveSlide(item) {
+    const now = new Date().toISOString();
+    const next = slideBorrows.map((b) =>
+      b.id === item.id
+        ? {
+            ...b,
+            receiveTime: now,
+            status: SLIDE_BORROW_STATUS.RECEIVED,
+            timeline: [
+              ...(b.timeline || []),
+              {
+                type: 'slide-receive',
+                event: '玻片接收',
+                at: formatDateShort(now),
+                by: b.borrower,
+                changedAt: now
+              }
+            ]
+          }
+        : b
+    );
+    persistBorrows(next);
+  }
+
+  function removeBorrowRecord(id) {
+    const next = slideBorrows.filter((item) => item.id !== id);
+    persistBorrows(next);
+  }
+
+  const filteredSlideBorrows = useMemo(() => {
+    void tick;
+    return slideBorrows
+      .filter((item) => {
+        const realStatus = calcBorrowStatus(item);
+        if (slideBorrowFilters.status !== '全部' && realStatus !== slideBorrowFilters.status) {
+          return false;
+        }
+        if (slideBorrowFilters.department !== '全部' && item.department !== slideBorrowFilters.department) {
+          return false;
+        }
+        if (slideBorrowFilters.query) {
+          const q = slideBorrowFilters.query.toLowerCase();
+          return (
+            item.caseNo.toLowerCase().includes(q) ||
+            item.borrower.toLowerCase().includes(q) ||
+            (item.remark || '').toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const statusOrder = { '已逾期': 0, '已借出': 1, '已接收': 2, '已归还': 3 };
+        const statusA = statusOrder[calcBorrowStatus(a)] ?? 9;
+        const statusB = statusOrder[calcBorrowStatus(b)] ?? 9;
+        if (statusA !== statusB) return statusA - statusB;
+        return new Date(b.borrowTime).getTime() - new Date(a.borrowTime).getTime();
+      });
+  }, [slideBorrows, slideBorrowFilters, tick]);
+
+  const borrowStats = useMemo(() => {
+    void tick;
+    let total = slideBorrows.length;
+    let borrowed = 0;
+    let received = 0;
+    let returned = 0;
+    let overdue = 0;
+
+    slideBorrows.forEach((item) => {
+      const status = calcBorrowStatus(item);
+      if (status === SLIDE_BORROW_STATUS.BORROWED) borrowed++;
+      if (status === SLIDE_BORROW_STATUS.RECEIVED) received++;
+      if (status === SLIDE_BORROW_STATUS.RETURNED) returned++;
+      if (status === SLIDE_BORROW_STATUS.OVERDUE) overdue++;
+    });
+
+    return { total, borrowed, received, returned, overdue, unreturned: borrowed + received + overdue };
+  }, [slideBorrows, tick]);
+
+  const departmentList = useMemo(() => {
+    const depts = new Set(DEFAULT_DEPARTMENTS);
+    slideBorrows.forEach((item) => {
+      if (item.department) depts.add(item.department);
+    });
+    return Array.from(depts).sort();
+  }, [slideBorrows]);
+
+  const getCaseBorrowRecords = useMemo(() => {
+    return (caseNo) => {
+      return slideBorrows.filter((b) => b.caseNo === caseNo);
+    };
+  }, [slideBorrows]);
+
+  const getMergedTimeline = useMemo(() => {
+    return (record) => {
+      const caseBorrows = slideBorrows.filter((b) => b.caseNo === record.caseNo);
+      const merged = [];
+
+      (record.timeline || []).forEach((step) => {
+        merged.push({
+          ...step,
+          type: 'review-status',
+          sortTime: new Date(step.changedAt || step.at).getTime()
+        });
+      });
+
+      caseBorrows.forEach((borrow) => {
+        (borrow.timeline || []).forEach((event) => {
+          merged.push({
+            ...event,
+            borrowId: borrow.id,
+            borrower: borrow.borrower,
+            sortTime: new Date(event.changedAt || event.at).getTime()
+          });
+        });
+      });
+
+      return merged.sort((a, b) => a.sortTime - b.sortTime);
+    };
+  }, [slideBorrows]);
 
   function addRecord(event) {
     event.preventDefault();
@@ -1016,6 +1439,13 @@ function App() {
         >
           <UserPlus size={16} />
           医生派单与负荷
+        </button>
+        <button
+          className={`view-tab ${activeView === 'slide-borrow' ? 'active' : ''}`}
+          onClick={() => handleViewChange('slide-borrow')}
+        >
+          <BookOpen size={16} />
+          玻片借阅归还
         </button>
       </section>
 
@@ -1514,22 +1944,39 @@ function App() {
               )}
 
               <div className="timeline">
-                {(selected.timeline || []).map((step, index) => {
-                  const isReview = step.status === '复核意见';
+                {getMergedTimeline(selected).map((step, index) => {
+                  const isReview = step.type === 'review-status' && step.status === '复核意见';
                   const isDispatch = step.status === '派单';
+                  const isSlideBorrow = step.type === 'slide-borrow';
+                  const isSlideReceive = step.type === 'slide-receive';
+                  const isSlideReturn = step.type === 'slide-return';
                   const reviewForStep = isReview
                     ? (selected.reviews || []).find((r) => r.id === step.reviewId)
                     : null;
-                  let displayText = `${step.at} · ${step.status}`;
+                  let displayText = `${step.at} · `;
+                  if (step.type === 'review-status') {
+                    displayText += step.status || '状态变更';
+                  } else {
+                    displayText += step.event || '事件';
+                  }
                   if (isReview && reviewForStep) {
                     displayText += `（${reviewForStep.conclusion}）`;
                   }
                   if (isDispatch && step.fromDoctor && step.toDoctor) {
                     displayText += `：${step.fromDoctor} → ${step.toDoctor}`;
                   }
+                  if (isSlideBorrow && step.department) {
+                    displayText += `（${step.department}）`;
+                  }
                   displayText += ` · ${step.by}`;
                   return (
-                    <span key={index} className={`${isReview ? 'timeline-review' : ''} ${isDispatch ? 'timeline-dispatch' : ''}`}>
+                    <span key={index} className={`
+                      ${isReview ? 'timeline-review' : ''}
+                      ${isDispatch ? 'timeline-dispatch' : ''}
+                      ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
+                      ${isSlideReceive ? 'timeline-slide-receive' : ''}
+                      ${isSlideReturn ? 'timeline-slide-return' : ''}
+                    `}>
                       {displayText}
                     </span>
                   );
@@ -1825,6 +2272,373 @@ function App() {
               </div>
             </div>
           </section>
+        </>
+      )}
+
+      {activeView === 'slide-borrow' && (
+        <>
+          <section className="borrow-stats">
+            <article className="metric borrow-metric borrow-metric-total">
+              <span>借阅总数</span>
+              <strong>{borrowStats.total}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-unreturned">
+              <span>未归还</span>
+              <strong>{borrowStats.unreturned}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-overdue">
+              <span>已逾期</span>
+              <strong>{borrowStats.overdue}</strong>
+            </article>
+            <article className="metric borrow-metric borrow-metric-returned">
+              <span>已归还</span>
+              <strong>{borrowStats.returned}</strong>
+            </article>
+          </section>
+
+          <section className="workspace borrow-workspace">
+            <form className="panel form-panel borrow-form-panel" onSubmit={handleBorrowSubmit}>
+              <div className="panel-title">
+                <Plus size={18} />
+                <h2>{editingBorrow ? '编辑借阅记录' : '新增借阅记录'}</h2>
+              </div>
+              <div className="form-grid">
+                <label className="wide">
+                  <span><FileText size={13} />病例号</span>
+                  <input
+                    type="text"
+                    value={borrowForm.caseNo}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, caseNo: e.target.value })}
+                    placeholder="请输入病例号，如 P2026061301"
+                    required
+                  />
+                </label>
+                <label>
+                  <span><UserCheck size={13} />借阅人</span>
+                  <input
+                    type="text"
+                    value={borrowForm.borrower}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, borrower: e.target.value })}
+                    placeholder="请输入借阅人姓名"
+                    required
+                  />
+                </label>
+                <label>
+                  <span><Building2 size={13} />科室</span>
+                  <select
+                    value={borrowForm.department}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, department: e.target.value })}
+                  >
+                    {departmentList.map((d) => <option key={d}>{d}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span><CalendarClock size={13} />借出时间</span>
+                  <input
+                    type="datetime-local"
+                    value={borrowForm.borrowTime}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, borrowTime: e.target.value })}
+                    required
+                  />
+                </label>
+                <label>
+                  <span><Home size={13} />预计归还时间</span>
+                  <input
+                    type="datetime-local"
+                    value={borrowForm.expectedReturnTime}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, expectedReturnTime: e.target.value })}
+                    required
+                  />
+                </label>
+                <label>
+                  <span><CornerDownRight size={13} />接收时间</span>
+                  <input
+                    type="datetime-local"
+                    value={borrowForm.receiveTime}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, receiveTime: e.target.value })}
+                  />
+                </label>
+                <label>
+                  <span><Undo2 size={13} />实际归还时间</span>
+                  <input
+                    type="datetime-local"
+                    value={borrowForm.actualReturnTime}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, actualReturnTime: e.target.value })}
+                  />
+                </label>
+                <label className="wide">
+                  <span><ClipboardList size={13} />备注</span>
+                  <textarea
+                    value={borrowForm.remark}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, remark: e.target.value })}
+                    placeholder="请输入备注信息（选填）"
+                    rows={3}
+                  />
+                </label>
+              </div>
+              <div className="form-actions">
+                <button
+                  className="primary"
+                  type="submit"
+                  disabled={!borrowForm.caseNo.trim() || !borrowForm.borrower.trim() || !borrowForm.borrowTime || !borrowForm.expectedReturnTime}
+                >
+                  <Save size={18} />{editingBorrow ? '保存修改' : '新增借阅'}
+                </button>
+                {editingBorrow && (
+                  <button className="secondary" type="button" onClick={closeBorrowModal}>
+                    <X size={18} />取消
+                  </button>
+                )}
+              </div>
+              <p className="hint">围绕病例号记录玻片从病理科借出、接收、归还的流转。</p>
+            </form>
+
+            <section className="panel list-panel borrow-list-panel">
+              <div className="toolbar borrow-toolbar">
+                <div className="search">
+                  <Search size={16} />
+                  <input
+                    value={slideBorrowFilters.query}
+                    onChange={(e) => setSlideBorrowFilters({ ...slideBorrowFilters, query: e.target.value })}
+                    placeholder="搜索病例号、借阅人、备注..."
+                  />
+                </div>
+                <select
+                  value={slideBorrowFilters.status}
+                  onChange={(e) => setSlideBorrowFilters({ ...slideBorrowFilters, status: e.target.value })}
+                >
+                  {SLIDE_BORROW_STATUS_LIST.map((s) => <option key={s}>{s}</option>)}
+                </select>
+                <select
+                  value={slideBorrowFilters.department}
+                  onChange={(e) => setSlideBorrowFilters({ ...slideBorrowFilters, department: e.target.value })}
+                >
+                  <option>全部科室</option>
+                  {departmentList.map((d) => <option key={d}>{d}</option>)}
+                </select>
+              </div>
+
+              <div className="borrow-list">
+                {filteredSlideBorrows.length === 0 && (
+                  <div className="dispatch-empty">
+                    <BookOpen size={32} />
+                    <p>暂无符合条件的借阅记录</p>
+                  </div>
+                )}
+                {filteredSlideBorrows.map((item) => {
+                  const status = calcBorrowStatus(item);
+                  const overdue = isOverdue(item);
+                  const odDays = overdueDays(item);
+                  return (
+                    <article
+                      key={item.id}
+                      className={`borrow-card ${borrowStatusClass(status)} ${selectedBorrowForDetail?.id === item.id ? 'selected' : ''}`}
+                      onClick={() => {
+                        const caseRecord = records.find((r) => r.caseNo === item.caseNo);
+                        if (caseRecord) {
+                          setSelected(caseRecord);
+                        }
+                        setSelectedBorrowForDetail(selectedBorrowForDetail?.id === item.id ? null : item);
+                      }}
+                    >
+                      <div className="borrow-card-head">
+                        <div>
+                          <h3>{item.caseNo}</h3>
+                          <p>{item.borrower} · {item.department}</p>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                          <span className={`status borrow-status ${borrowStatusClass(status)}`}>{status}</span>
+                          {overdue && (
+                            <span className="borrow-overdue-badge">
+                              <AlertTriangle size={12} />
+                              逾期{odDays}天
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="borrow-card-times">
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">借出</span>
+                          <span className="borrow-time-value">
+                            {item.borrowTime ? new Date(item.borrowTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                          </span>
+                        </div>
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">预计归还</span>
+                          <span className={`borrow-time-value ${overdue ? 'borrow-overdue-text' : ''}`}>
+                            {item.expectedReturnTime ? new Date(item.expectedReturnTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                          </span>
+                        </div>
+                        <div className="borrow-time-item">
+                          <span className="borrow-time-label">实际归还</span>
+                          <span className="borrow-time-value">
+                            {item.actualReturnTime ? new Date(item.actualReturnTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未归还'}
+                          </span>
+                        </div>
+                      </div>
+                      {item.remark && (
+                        <p className="borrow-card-remark">{item.remark}</p>
+                      )}
+                      <div className="borrow-card-actions" onClick={(e) => e.stopPropagation()}>
+                        {status === SLIDE_BORROW_STATUS.BORROWED && (
+                          <button
+                            className="wb-btn wb-btn-receive"
+                            type="button"
+                            onClick={() => handleReceiveSlide(item)}
+                          >
+                            <CornerDownRight size={13} />确认接收
+                          </button>
+                        )}
+                        {(status === SLIDE_BORROW_STATUS.BORROWED || status === SLIDE_BORROW_STATUS.RECEIVED || status === SLIDE_BORROW_STATUS.OVERDUE) && (
+                          <button
+                            className="wb-btn wb-btn-return"
+                            type="button"
+                            onClick={() => handleReturnSlide(item)}
+                          >
+                            <Undo2 size={13} />确认归还
+                          </button>
+                        )}
+                        <button
+                          className="wb-btn"
+                          type="button"
+                          onClick={() => openBorrowModal(item)}
+                        >
+                          <Edit size={13} />编辑
+                        </button>
+                        <button
+                          className="ghost-danger wb-btn"
+                          type="button"
+                          onClick={() => removeBorrowRecord(item.id)}
+                        >
+                          <Trash2 size={13} />删除
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          </section>
+
+          {selectedBorrowForDetail && (
+            <section className="insights">
+              <div className="panel">
+                <div className="panel-title">
+                  <BookOpen size={18} />
+                  <h2>借阅详情</h2>
+                </div>
+                <div className="borrow-detail">
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">病例号</span>
+                    <span className="borrow-detail-value">{selectedBorrowForDetail.caseNo}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">借阅人</span>
+                    <span className="borrow-detail-value">{selectedBorrowForDetail.borrower}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">科室</span>
+                    <span className="borrow-detail-value">{selectedBorrowForDetail.department}</span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">借出时间</span>
+                    <span className="borrow-detail-value">
+                      {selectedBorrowForDetail.borrowTime ? new Date(selectedBorrowForDetail.borrowTime).toLocaleString('zh-CN') : '-'}
+                    </span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">接收时间</span>
+                    <span className="borrow-detail-value">
+                      {selectedBorrowForDetail.receiveTime ? new Date(selectedBorrowForDetail.receiveTime).toLocaleString('zh-CN') : '未接收'}
+                    </span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">预计归还</span>
+                    <span className={`borrow-detail-value ${isOverdue(selectedBorrowForDetail) ? 'borrow-overdue-text' : ''}`}>
+                      {selectedBorrowForDetail.expectedReturnTime ? new Date(selectedBorrowForDetail.expectedReturnTime).toLocaleString('zh-CN') : '-'}
+                    </span>
+                  </div>
+                  <div className="borrow-detail-item">
+                    <span className="borrow-detail-label">实际归还</span>
+                    <span className="borrow-detail-value">
+                      {selectedBorrowForDetail.actualReturnTime ? new Date(selectedBorrowForDetail.actualReturnTime).toLocaleString('zh-CN') : '未归还'}
+                    </span>
+                  </div>
+                  {selectedBorrowForDetail.remark && (
+                    <div className="borrow-detail-item wide">
+                      <span className="borrow-detail-label">备注</span>
+                      <span className="borrow-detail-value">{selectedBorrowForDetail.remark}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="timeline">
+                  {(selectedBorrowForDetail.timeline || []).map((event, index) => (
+                    <span key={index} className={`timeline-${event.type}`}>
+                      {event.at} · {event.event} · {event.by}
+                      {event.department && `（${event.department}）`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <aside className="panel detail-panel">
+                <div className="panel-title">
+                  <CheckCircle2 size={18} />
+                  <h2>关联病例详情</h2>
+                </div>
+                {selected ? (
+                  <div className="detail">
+                    <h3>{selected.caseNo}</h3>
+                    <p>{`${selected.sampleType} · ${selected.priority} · ${selected.doctor}`}</p>
+                    <p>{selected.summary}</p>
+
+                    <div className="timeline">
+                      {getMergedTimeline(selected).map((step, index) => {
+                        const isReview = step.type === 'review-status';
+                        const isSlideBorrow = step.type === 'slide-borrow';
+                        const isSlideReceive = step.type === 'slide-receive';
+                        const isSlideReturn = step.type === 'slide-return';
+                        const isDispatch = step.status === '派单';
+
+                        let displayText = `${step.at} · `;
+                        if (isReview) {
+                          displayText += step.status || '状态变更';
+                        } else {
+                          displayText += step.event || '事件';
+                        }
+
+                        if (isDispatch && step.fromDoctor && step.toDoctor) {
+                          displayText += `：${step.fromDoctor} → ${step.toDoctor}`;
+                        }
+                        if (isSlideBorrow && step.department) {
+                          displayText += `（${step.department}）`;
+                        }
+
+                        displayText += ` · ${step.by}`;
+
+                        return (
+                          <span
+                            key={index}
+                            className={`
+                              ${isReview && step.status === '复核意见' ? 'timeline-review' : ''}
+                              ${isDispatch ? 'timeline-dispatch' : ''}
+                              ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
+                              ${isSlideReceive ? 'timeline-slide-receive' : ''}
+                              ${isSlideReturn ? 'timeline-slide-return' : ''}
+                            `}
+                          >
+                            {displayText}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="empty">点击左侧借阅记录查看关联病例详情。</p>
+                )}
+              </aside>
+            </section>
+          )}
         </>
       )}
 
