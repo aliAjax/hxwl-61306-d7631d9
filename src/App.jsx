@@ -230,7 +230,7 @@ function App() {
   const HEADER_KEYWORDS = ['病例号', '标本类型', '优先级', '送检时间', '负责医生', '备注', 'caseno', 'sampletype', 'priority', 'sentat', 'doctor', 'summary'];
 
   function parseBatchLines(raw) {
-    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    const lines = raw.split('\n').map((l) => l.trimEnd()).filter(Boolean);
     if (!lines.length) return [];
 
     let startIndex = 0;
@@ -239,21 +239,33 @@ function App() {
       startIndex = 1;
     }
 
+    const fieldCount = BATCH_FIELDS.length;
     const existingCaseNos = new Set(records.map((r) => r.caseNo));
     const seenCaseNos = new Set();
     const parsed = [];
 
     for (let i = startIndex; i < lines.length; i++) {
-      const parts = lines[i].split('\t');
-      if (parts.length < 1) continue;
+      const rawLine = lines[i];
+      let parts = rawLine.split('\t');
+      if (parts.length < fieldCount) {
+        parts = parts.concat(new Array(fieldCount - parts.length).fill(''));
+      } else if (parts.length > fieldCount) {
+        const extra = parts.slice(fieldCount - 1).join(' ');
+        parts = parts.slice(0, fieldCount - 1).concat([extra]);
+      }
+      parts = parts.map((p) => (p || '').trim());
 
       const record = {};
       BATCH_FIELDS.forEach((field, idx) => {
-        record[field.key] = (parts[idx] || '').trim();
+        record[field.key] = parts[idx] || '';
       });
 
-      const missing = BATCH_FIELDS
+      const missingRequired = BATCH_FIELDS
         .filter((f) => f.required && !record[f.key])
+        .map((f) => f.label);
+
+      const missingOptional = BATCH_FIELDS
+        .filter((f) => !f.required && !record[f.key])
         .map((f) => f.label);
 
       const duplicate = record.caseNo && (existingCaseNos.has(record.caseNo) || seenCaseNos.has(record.caseNo));
@@ -264,9 +276,10 @@ function App() {
         _id: uid(),
         ...record,
         status: appConfig.primaryStatus,
-        _missing: missing,
+        _missingRequired: missingRequired,
+        _missingOptional: missingOptional,
         _duplicate: duplicate,
-        _invalid: missing.length > 0,
+        _invalid: missingRequired.length > 0,
       });
     }
 
@@ -592,8 +605,8 @@ function App() {
                 <div className="batch-preview">
                   <div className="batch-summary">
                     <span>共解析 <strong>{batchParsed.length}</strong> 条</span>
-                    {batchParsed.some((r) => r._missing.length > 0) && (
-                      <span className="warning"><AlertTriangle size={14} />{batchParsed.filter((r) => r._missing.length > 0).length} 条缺失必填字段</span>
+                    {batchParsed.some((r) => r._missingRequired.length > 0) && (
+                      <span className="warning"><AlertTriangle size={14} />{batchParsed.filter((r) => r._missingRequired.length > 0).length} 条缺失必填字段</span>
                     )}
                     {batchParsed.some((r) => r._duplicate) && (
                       <span className="warning"><AlertCircle size={14} />{batchParsed.filter((r) => r._duplicate).length} 条病例号重复</span>
@@ -615,8 +628,11 @@ function App() {
                         </div>
                         {r.summary && <p className="record-detail">{r.summary}</p>}
                         {r.sentAt && <p className="record-detail">送检时间：{r.sentAt}</p>}
-                        {r._missing.length > 0 && (
-                          <div className="warning"><AlertTriangle size={14} />缺失：{r._missing.join('、')}，导入时将跳过</div>
+                        {r._missingRequired.length > 0 && (
+                          <div className="warning"><AlertTriangle size={14} />缺失必填：{r._missingRequired.join('、')}，导入时将跳过</div>
+                        )}
+                        {r._missingOptional.length > 0 && r._missingRequired.length === 0 && (
+                          <div className="hint" style={{ marginTop: '8px', color: '#667085', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>未填写：{r._missingOptional.join('、')}</div>
                         )}
                         {r._duplicate && (
                           <div className="warning"><AlertCircle size={14} />病例号与已有记录重复，导入时将跳过</div>
