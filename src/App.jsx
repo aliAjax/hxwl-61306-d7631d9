@@ -302,6 +302,10 @@ function hasDuplicateUnconfirmedNotify(caseId, caseNo, notifyTarget, notifies) {
   });
 }
 
+function isCriticalNotifyEligible(record) {
+  return !!record && (record.priority === '危急' || record.status === '待复核');
+}
+
 function formatDateTime(dateStr) {
   if (!dateStr) return '-';
   try {
@@ -1133,12 +1137,17 @@ function App() {
       return;
     }
     const now = new Date().toISOString();
-    const caseRecord = records.find((r) => r.id === notifyForm.caseId || r.caseNo === notifyForm.caseNo);
+    const caseNo = notifyForm.caseNo.trim();
+    const caseRecord = records.find((r) => r.caseNo === caseNo);
+    if (!isCriticalNotifyEligible(caseRecord)) {
+      setNotifyDuplicateWarning('仅支持为优先级为「危急」或状态为「待复核」的病例创建通知，请先选择符合条件的病例');
+      return;
+    }
     const priority = caseRecord?.priority || '常规';
     const newNotify = {
       id: uid(),
-      caseId: notifyForm.caseId || caseRecord?.id || '',
-      caseNo: notifyForm.caseNo.trim(),
+      caseId: caseRecord.id,
+      caseNo,
       notifyTarget: notifyForm.notifyTarget.trim(),
       notifyMethod: notifyForm.notifyMethod,
       sentAt: notifyForm.sentAt,
@@ -3238,15 +3247,14 @@ function App() {
                     type="text"
                     value={notifyForm.caseNo}
                     onChange={(e) => {
-                      setNotifyForm({ ...notifyForm, caseNo: e.target.value });
                       const matched = records.find((r) => r.caseNo === e.target.value.trim());
-                      if (matched) {
-                        setNotifyForm((prev) => ({
-                          ...prev,
-                          caseId: matched.id,
-                          notifyTarget: matched.doctor || prev.notifyTarget
-                        }));
-                      }
+                      setNotifyDuplicateWarning('');
+                      setNotifyForm({
+                        ...notifyForm,
+                        caseNo: e.target.value,
+                        caseId: matched?.id || '',
+                        notifyTarget: matched?.doctor || notifyForm.notifyTarget
+                      });
                       setTimeout(checkNotifyDuplicate, 50);
                     }}
                     placeholder="请输入病例号，如 P2026061117"
@@ -3269,6 +3277,7 @@ function App() {
                     type="text"
                     value={notifyForm.notifyTarget}
                     onChange={(e) => {
+                      setNotifyDuplicateWarning('');
                       setNotifyForm({ ...notifyForm, notifyTarget: e.target.value });
                       setTimeout(checkNotifyDuplicate, 50);
                     }}
@@ -3683,15 +3692,14 @@ function App() {
                       type="text"
                       value={notifyForm.caseNo}
                       onChange={(e) => {
-                        setNotifyForm({ ...notifyForm, caseNo: e.target.value });
                         const matched = records.find((r) => r.caseNo === e.target.value.trim());
-                        if (matched) {
-                          setNotifyForm((prev) => ({
-                            ...prev,
-                            caseId: matched.id,
-                            notifyTarget: matched.doctor || prev.notifyTarget
-                          }));
-                        }
+                        setNotifyDuplicateWarning('');
+                        setNotifyForm({
+                          ...notifyForm,
+                          caseNo: e.target.value,
+                          caseId: matched?.id || '',
+                          notifyTarget: matched?.doctor || notifyForm.notifyTarget
+                        });
                         setTimeout(checkNotifyDuplicate, 50);
                       }}
                       placeholder="请输入病例号"
@@ -3714,6 +3722,7 @@ function App() {
                       type="text"
                       value={notifyForm.notifyTarget}
                       onChange={(e) => {
+                        setNotifyDuplicateWarning('');
                         setNotifyForm({ ...notifyForm, notifyTarget: e.target.value });
                         setTimeout(checkNotifyDuplicate, 50);
                       }}
