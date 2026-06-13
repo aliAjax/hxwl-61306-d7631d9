@@ -247,6 +247,132 @@ function prevStatus(current) {
 
 const REVIEW_CONCLUSIONS = ['通过', '修改后通过', '退回重审'];
 
+const TAT_THRESHOLDS = {
+  '危急': { timeout: 2 * 60, warning: 1 * 60 },
+  '加急': { timeout: 24 * 60, warning: 12 * 60 },
+  '常规': { timeout: 72 * 60, warning: 48 * 60 },
+};
+
+const TAT_STATUS = {
+  NORMAL: 'normal',
+  WARNING: 'warning',
+  OVERDUE: 'overdue',
+  UNKNOWN: 'unknown',
+};
+
+function getTatThresholds(priority) {
+  return TAT_THRESHOLDS[priority] || TAT_THRESHOLDS['常规'];
+}
+
+function getStartTime(item) {
+  const timeline = item.timeline || [];
+  const firstEntry = timeline[0];
+  const candidates = [item.sentAt, item.createdAt, firstEntry?.changedAt];
+  for (const value of candidates) {
+    if (value) {
+      const ms = new Date(value).getTime();
+      if (Number.isFinite(ms)) return ms;
+    }
+  }
+  return null;
+}
+
+function getEndTime(item) {
+  if (item.status !== '已完成') return null;
+  const timeline = item.timeline || [];
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    if (timeline[i].status === '已完成') {
+      const ms = new Date(timeline[i].changedAt).getTime();
+      if (Number.isFinite(ms)) return ms;
+    }
+  }
+  return null;
+}
+
+function calcTatInfo(item) {
+  const startMs = getStartTime(item);
+  const now = Date.now();
+
+  if (!startMs) {
+    return {
+      status: TAT_STATUS.UNKNOWN,
+      waitedMinutes: 0,
+      remainingMinutes: null,
+      threshold: null,
+      hasStartTime: false,
+    };
+  }
+
+  const endMs = getEndTime(item);
+  const refMs = endMs || now;
+  const waitedMinutes = Math.floor((refMs - startMs) / 60000);
+  const thresholds = getTatThresholds(item.priority);
+  const timeoutMinutes = thresholds.timeout;
+  const warningMinutes = thresholds.warning;
+
+  if (item.status === '已完成') {
+    const isOverdue = waitedMinutes > timeoutMinutes;
+    return {
+      status: isOverdue ? TAT_STATUS.OVERDUE : TAT_STATUS.NORMAL,
+      waitedMinutes,
+      remainingMinutes: 0,
+      threshold: timeoutMinutes,
+      hasStartTime: true,
+      isCompleted: true,
+    };
+  }
+
+  const remainingMinutes = timeoutMinutes - waitedMinutes;
+
+  let status;
+  if (remainingMinutes <= 0) {
+    status = TAT_STATUS.OVERDUE;
+  } else if (remainingMinutes <= warningMinutes) {
+    status = TAT_STATUS.WARNING;
+  } else {
+    status = TAT_STATUS.NORMAL;
+  }
+
+  return {
+    status,
+    waitedMinutes,
+    remainingMinutes,
+    threshold: timeoutMinutes,
+    hasStartTime: true,
+    isCompleted: false,
+  };
+}
+
+function formatDuration(minutes) {
+  if (!Number.isFinite(minutes)) return '-';
+  const absMins = Math.abs(minutes);
+  const days = Math.floor(absMins / 1440);
+  const hours = Math.floor((absMins % 1440) / 60);
+  const mins = Math.floor(absMins % 60);
+  const prefix = minutes < 0 ? '超' : '';
+  if (days > 0) return `${prefix}${days}天${hours}时`;
+  if (hours > 0) return `${prefix}${hours}时${mins}分`;
+  return `${prefix}${mins}分`;
+}
+
+function tatStatusLabel(status) {
+  return {
+    [TAT_STATUS.NORMAL]: '正常',
+    [TAT_STATUS.WARNING]: '即将超时',
+    [TAT_STATUS.OVERDUE]: '已超时',
+    [TAT_STATUS.UNKNOWN]: '待计时',
+  }[status] || '未知';
+}
+
+function tatStatusClass(status) {
+  return {
+    [TAT_STATUS.NORMAL]: 'tat-normal',
+    [TAT_STATUS.WARNING]: 'tat-warning',
+    [TAT_STATUS.OVERDUE]: 'tat-overdue',
+    [TAT_STATUS.UNKNOWN]: 'tat-unknown',
+  }[status] || 'tat-unknown';
+}
+
 function App() {
   const [records, setRecords] = useState(loadRecords);
   const [form, setForm] = useState(appConfig.defaultValues);
@@ -258,6 +384,8 @@ function App() {
   const [tick, setTick] = useState(0);
   const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
   const [reviewEditing, setReviewEditing] = useState(false);
+  const [tatFilters, setTatFilters] = useState({ doctor: '全部', status: '全部', tatStatus: '全部' });
+  const [showTatBoard, setShowTatBoard] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -571,6 +699,75 @@ function App() {
     }));
   }, [records, tick]);
 
+  const doctorList = useMemo(() => {
+    const doctors = new Set();
+    records.forEach((item) => {
+      if (item.doctor) doctors.add(item.doctor);
+    });
+    return Array.from(doctors).sort();
+  }, [records]);
+
+  const tatStats = useMemo(() => {
+    void tick;
+    let overdue = 0;
+    let warning = 0;
+    let normal = 0;
+    let unknown = 0;
+    const waitTimes = [];
+
+    records.forEach((item) => {
+      const tat = calcTatInfo(item);
+      if (tat.hasStartTime) {
+        waitTimes.push(tat.waitedMinutes);
+      }
+      switch (tat.status) {
+        case TAT_STATUS.OVERDUE:
+          overdue++;
+          break;
+        case TAT_STATUS.WARNING:
+          warning++;
+          break;
+        case TAT_STATUS.NORMAL:
+          normal++;
+          break;
+        default:
+          unknown++;
+      }
+    });
+
+    const avgWait = waitTimes.length
+      ? Math.floor(waitTimes.reduce((s, v) => s + v, 0) / waitTimes.length)
+      : 0;
+
+    return { overdue, warning, normal, unknown, total: records.length, avgWait };
+  }, [records, tick]);
+
+  const tatFilteredRecords = useMemo(() => {
+    void tick;
+    return records
+      .filter((item) => tatFilters.doctor === '全部' || item.doctor === tatFilters.doctor)
+      .filter((item) => tatFilters.status === '全部' || item.status === tatFilters.status)
+      .filter((item) => {
+        if (tatFilters.tatStatus === '全部') return true;
+        const tat = calcTatInfo(item);
+        if (tatFilters.tatStatus === '已超时') return tat.status === TAT_STATUS.OVERDUE;
+        if (tatFilters.tatStatus === '即将超时') return tat.status === TAT_STATUS.WARNING;
+        if (tatFilters.tatStatus === '正常') return tat.status === TAT_STATUS.NORMAL;
+        if (tatFilters.tatStatus === '待计时') return tat.status === TAT_STATUS.UNKNOWN;
+        return true;
+      })
+      .sort((a, b) => {
+        const tatA = calcTatInfo(a);
+        const tatB = calcTatInfo(b);
+        const rankA = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatA.status] ?? 9;
+        const rankB = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatB.status] ?? 9;
+        if (rankA !== rankB) return rankA - rankB;
+        const priorityDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        if (priorityDiff !== 0) return priorityDiff;
+        return (tatA.waitedMinutes || 0) - (tatB.waitedMinutes || 0);
+      });
+  }, [records, tatFilters, tick]);
+
   return (
     <main className="shell" style={{ '--accent': appConfig.accent }}>
       <section className="hero">
@@ -597,6 +794,10 @@ function App() {
       <section className="workbench">
         <div className="workbench-header">
           <div className="eyebrow"><Microscope size={18} />今日阅片工作台</div>
+          <button className="tat-toggle-btn" type="button" onClick={() => setShowTatBoard(!showTatBoard)}>
+            <Clock size={14} />
+            {showTatBoard ? '隐藏TAT预警' : 'TAT超时预警'}
+          </button>
         </div>
         <div className="workbench-columns">
           {workbenchGroups.map((zone) => {
@@ -612,8 +813,10 @@ function App() {
                   {zone.items.length === 0 && (
                     <p className="workbench-empty">暂无病例</p>
                   )}
-                  {zone.items.map((item) => (
-                    <div className="workbench-card" key={item.id} onClick={() => setSelected(item)}>
+                  {zone.items.map((item) => {
+                    const tat = calcTatInfo(item);
+                    return (
+                    <div className={`workbench-card tat-card-${tat.status}`} key={item.id} onClick={() => setSelected(item)}>
                       <div className="workbench-card-top">
                         <h3>{item.caseNo}</h3>
                         <span className={'status ' + statusClass(item.status)}>{item.status}</span>
@@ -631,6 +834,11 @@ function App() {
                       <div className="workbench-card-wait">
                         <Clock size={13} />
                         <span>{waitDuration(item)}</span>
+                        {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
+                          <span className={`wb-tat-badge ${tatStatusClass(tat.status)}`}>
+                            {tatStatusLabel(tat.status)}
+                          </span>
+                        )}
                       </div>
                       <div className="workbench-card-actions" onClick={(e) => e.stopPropagation()}>
                         {prevStatus(item.status) && (
@@ -645,13 +853,124 @@ function App() {
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
           })}
         </div>
       </section>
+
+      {showTatBoard && (
+        <section className="tat-board">
+          <div className="tat-header">
+            <div className="eyebrow"><Clock size={18} />TAT超时预警看板</div>
+            <div className="tat-filters">
+              <select value={tatFilters.tatStatus} onChange={(e) => setTatFilters({ ...tatFilters, tatStatus: e.target.value })}>
+                <option value="全部">全部状态</option>
+                <option value="已超时">已超时</option>
+                <option value="即将超时">即将超时</option>
+                <option value="正常">正常</option>
+                <option value="待计时">待计时</option>
+              </select>
+              <select value={tatFilters.doctor} onChange={(e) => setTatFilters({ ...tatFilters, doctor: e.target.value })}>
+                <option value="全部">全部医生</option>
+                {doctorList.map((d) => <option key={d}>{d}</option>)}
+              </select>
+              <select value={tatFilters.status} onChange={(e) => setTatFilters({ ...tatFilters, status: e.target.value })}>
+                <option value="全部">全部阅片状态</option>
+                {appConfig.statuses.map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="tat-metrics">
+            <div className="tat-metric tat-metric-overdue">
+              <div className="tat-metric-label">已超时</div>
+              <div className="tat-metric-value">{tatStats.overdue}</div>
+              <div className="tat-metric-desc">超过TAT阈值</div>
+            </div>
+            <div className="tat-metric tat-metric-warning">
+              <div className="tat-metric-label">即将超时</div>
+              <div className="tat-metric-value">{tatStats.warning}</div>
+              <div className="tat-metric-desc">即将到达预警线</div>
+            </div>
+            <div className="tat-metric tat-metric-normal">
+              <div className="tat-metric-label">正常</div>
+              <div className="tat-metric-value">{tatStats.normal}</div>
+              <div className="tat-metric-desc">在TAT范围内</div>
+            </div>
+            <div className="tat-metric tat-metric-avg">
+              <div className="tat-metric-label">平均等待</div>
+              <div className="tat-metric-value">{formatDuration(tatStats.avgWait)}</div>
+              <div className="tat-metric-desc">整体平均时长</div>
+            </div>
+          </div>
+
+          <div className="tat-thresholds">
+            <span className="tat-thresholds-label">TAT阈值：</span>
+            {Object.entries(TAT_THRESHOLDS).map(([priority, th]) => (
+              <span key={priority} className="tat-threshold-item">
+                <strong>{priority}</strong>：{formatDuration(th.warning)}预警 / {formatDuration(th.timeout)}超时
+              </span>
+            ))}
+          </div>
+
+          <div className="tat-list">
+            {tatFilteredRecords.length === 0 && (
+              <div className="tat-empty">暂无符合条件的病例</div>
+            )}
+            {tatFilteredRecords.map((item) => {
+              const tat = calcTatInfo(item);
+              return (
+                <article
+                  className={`tat-record tat-${tat.status}`}
+                  key={item.id}
+                  onClick={() => setSelected(item)}
+                >
+                  <div className="tat-record-main">
+                    <div className="tat-record-head">
+                      <h3>{item.caseNo}</h3>
+                      <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
+                        {tatStatusLabel(tat.status)}
+                      </span>
+                    </div>
+                    <div className="tat-record-meta">
+                      <span>{item.sampleType}</span>
+                      <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
+                      <span>{item.doctor}</span>
+                      <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                    </div>
+                  </div>
+                  <div className="tat-record-times">
+                    <div className="tat-time-item">
+                      <span className="tat-time-label">已等待</span>
+                      <span className="tat-time-value">{tat.hasStartTime ? formatDuration(tat.waitedMinutes) : '-'}</span>
+                    </div>
+                    <div className="tat-time-item">
+                      <span className="tat-time-label">剩余时间</span>
+                      <span className={`tat-time-value ${tat.status === TAT_STATUS.OVERDUE ? 'tat-overdue-text' : tat.status === TAT_STATUS.WARNING ? 'tat-warning-text' : ''}`}>
+                        {tat.isCompleted ? '已完成' : tat.hasStartTime ? formatDuration(tat.remainingMinutes) : '-'}
+                      </span>
+                    </div>
+                    <div className="tat-time-item">
+                      <span className="tat-time-label">TAT阈值</span>
+                      <span className="tat-time-value">{tat.threshold ? formatDuration(tat.threshold) : '-'}</span>
+                    </div>
+                  </div>
+                  <div className="tat-progress">
+                    <div
+                      className={`tat-progress-bar ${tatStatusClass(tat.status)}`}
+                      style={{ width: `${tat.hasStartTime && tat.threshold ? Math.min(100, (tat.waitedMinutes / tat.threshold) * 100) : 0}%` }}
+                    />
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="workspace">
         <form className="panel form-panel" onSubmit={addRecord}>
@@ -701,14 +1020,32 @@ function App() {
           </div>
 
           <div className="records">
-            {filteredRecords.map((item) => (
-              <article className={'record ' + (item.conflict || hasOverlap(item, records) ? 'conflict' : '')} key={item.id} onClick={() => setSelected(item)}>
+            {filteredRecords.map((item) => {
+              const tat = calcTatInfo(item);
+              return (
+              <article className={`record ${item.conflict || hasOverlap(item, records) ? 'conflict' : ''} tat-list-${tat.status}`} key={item.id} onClick={() => setSelected(item)}>
                 <div className="record-head">
                   <div>
                     <h3>{item.caseNo}</h3>
                     <p>{`${item.sampleType} · ${item.priority} · ${item.doctor}`}</p>
                   </div>
-                  <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                    <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                    {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
+                      <span className={`record-tat-badge ${tatStatusClass(tat.status)}`}>
+                        {tatStatusLabel(tat.status)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="record-tat-info">
+                  <Clock size={12} />
+                  <span>已等待：{tat.hasStartTime ? formatDuration(tat.waitedMinutes) : '-'}</span>
+                  {tat.hasStartTime && !tat.isCompleted && (
+                    <span className={tat.status === TAT_STATUS.OVERDUE ? 'tat-overdue-text' : tat.status === TAT_STATUS.WARNING ? 'tat-warning-text' : ''}>
+                      · 剩余：{formatDuration(tat.remainingMinutes)}
+                    </span>
+                  )}
                 </div>
                 <p className="record-detail">{item.summary}</p>
                 {item.status === '待复核' && (item.reviews || []).length > 0 && (
@@ -727,7 +1064,8 @@ function App() {
                   <button className="ghost-danger" type="button" onClick={() => removeRecord(item.id)}><Trash2 size={14} /></button>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         </section>
       </section>
@@ -769,6 +1107,58 @@ function App() {
               <h3>{selected.caseNo}</h3>
               <p>{`${selected.sampleType} · ${selected.priority} · ${selected.doctor}`}</p>
               <p>{selected.summary}</p>
+
+              {(() => {
+                const tat = calcTatInfo(selected);
+                return (
+                  <div className={`detail-tat-section tat-detail-${tat.status}`}>
+                    <div className="detail-tat-header">
+                      <Clock size={16} />
+                      <span>TAT时效</span>
+                      <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
+                        {tatStatusLabel(tat.status)}
+                      </span>
+                    </div>
+                    <div className="detail-tat-grid">
+                      <div className="detail-tat-item">
+                        <span className="detail-tat-label">已等待</span>
+                        <span className="detail-tat-value">{tat.hasStartTime ? formatDuration(tat.waitedMinutes) : '-'}</span>
+                      </div>
+                      <div className="detail-tat-item">
+                        <span className="detail-tat-label">剩余时间</span>
+                        <span className={`detail-tat-value ${tat.status === TAT_STATUS.OVERDUE ? 'tat-overdue-text' : tat.status === TAT_STATUS.WARNING ? 'tat-warning-text' : ''}`}>
+                          {tat.isCompleted ? '已完成' : tat.hasStartTime ? formatDuration(tat.remainingMinutes) : '-'}
+                        </span>
+                      </div>
+                      <div className="detail-tat-item">
+                        <span className="detail-tat-label">TAT阈值</span>
+                        <span className="detail-tat-value">{tat.threshold ? formatDuration(tat.threshold) : '-'}</span>
+                      </div>
+                      <div className="detail-tat-item">
+                        <span className="detail-tat-label">送检时间</span>
+                        <span className="detail-tat-value">
+                          {selected.sentAt ? new Date(selected.sentAt).toLocaleString('zh-CN') : '未填写'}
+                        </span>
+                      </div>
+                    </div>
+                    {tat.hasStartTime && tat.threshold && (
+                      <div className="tat-progress detail-tat-progress">
+                        <div
+                          className={`tat-progress-bar ${tatStatusClass(tat.status)}`}
+                          style={{ width: `${Math.min(100, (tat.waitedMinutes / tat.threshold) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                    {!tat.hasStartTime && (
+                      <p className="detail-tat-hint">
+                        <AlertCircle size={12} />
+                        暂无送检时间，无法计算TAT
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+
               {selected.temps && (
                 <div className="temp-chart">
                   {selected.temps.map((value, index) => <i key={index} style={{ height: Math.max(10, 56 + Number(value) * 8) }} title={String(value)} />)}
