@@ -836,13 +836,13 @@ function App() {
     const tabSync = new TabSync(appConfig.storage, {
       onExternalUpdate: (externalRecords) => {
         setRecords(externalRecords);
-        if (selected) {
-          const updatedSelected = externalRecords.find((r) => r.id === selected.id);
-          setSelected(updatedSelected || null);
-        }
+        setSelected((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
       },
       onConflict: (conflictData) => {
-        tabSync.setLastExternalRecords(conflictData.externalRecords);
         setConflictInfo(conflictData);
         setShowConflictModal(true);
       },
@@ -1207,14 +1207,14 @@ function App() {
   }
 
   function handleConflictResolve(strategy) {
-    if (!conflictInfo) return;
-    const { externalRecords, localRecords, baseRecords } = conflictInfo;
-    const resolved = resolveConflict(strategy, localRecords, externalRecords, baseRecords);
-    persist(resolved);
-    if (selected) {
-      const updatedSelected = resolved.find((r) => r.id === selected.id);
-      setSelected(updatedSelected || null);
-    }
+    if (!conflictInfo || !tabSyncRef.current) return;
+    const resolved = tabSyncRef.current.resolve(strategy);
+    setRecords(resolved);
+    setSelected((prevSelected) => {
+      if (!prevSelected) return null;
+      const updatedSelected = resolved.find((r) => r.id === prevSelected.id);
+      return updatedSelected || null;
+    });
     setConflictInfo(null);
     setShowConflictModal(false);
   }

@@ -366,7 +366,6 @@ export class TabSync {
 
   persist(records) {
     this.currentRecords = JSON.parse(JSON.stringify(records));
-    this.baseSnapshot = JSON.parse(JSON.stringify(records));
     const payload = {
       tabId: this.tabId,
       records: records,
@@ -374,6 +373,11 @@ export class TabSync {
     };
     localStorage.setItem(this.storageKey, JSON.stringify(records));
     localStorage.setItem(this.storageKey + '_meta', JSON.stringify(payload));
+  }
+
+  _updateBaseSnapshot(records) {
+    this.baseSnapshot = JSON.parse(JSON.stringify(records));
+    this.currentRecords = JSON.parse(JSON.stringify(records));
   }
 
   _bindListeners() {
@@ -419,13 +423,13 @@ export class TabSync {
     conflictInfo.baseRecords = baseRecords;
 
     if (!conflictInfo.hasLocalChanges && conflictInfo.hasExternalChanges) {
-      this.baseSnapshot = JSON.parse(JSON.stringify(externalRecords));
-      this.currentRecords = JSON.parse(JSON.stringify(externalRecords));
+      this._updateBaseSnapshot(externalRecords);
       this.onExternalUpdate(externalRecords, conflictInfo);
       return;
     }
 
     if (conflictInfo.hasLocalChanges && conflictInfo.hasExternalChanges) {
+      this._lastExternalRecords = externalRecords;
       this.onConflict(conflictInfo);
     }
   }
@@ -482,18 +486,22 @@ export class TabSync {
   }
 
   resolve(strategy) {
+    const externalRecords = this._lastExternalRecords || this.currentRecords;
     const resolved = resolveConflict(
       strategy,
       this.currentRecords,
-      this._lastExternalRecords || this.currentRecords,
+      externalRecords,
       this.baseSnapshot
     );
-    this.persist(resolved);
+    this._updateBaseSnapshot(resolved);
+    localStorage.setItem(this.storageKey, JSON.stringify(resolved));
+    const payload = {
+      tabId: this.tabId,
+      records: resolved,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(this.storageKey + '_meta', JSON.stringify(payload));
     return resolved;
-  }
-
-  setLastExternalRecords(records) {
-    this._lastExternalRecords = JSON.parse(JSON.stringify(records));
   }
 
   destroy() {
