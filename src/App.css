@@ -55,6 +55,39 @@ h1 { font-size: 34px; line-height: 1.15; letter-spacing: 0; }
 .port-card span { color: #64748b; font-size: 13px; }
 .port-card strong { font-size: 30px; color: var(--accent); }
 
+.hero-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  min-width: 56px;
+  padding: 0;
+  border: 2px solid #e4e7ec;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475467;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(95, 105, 200, 0.15);
+}
+
+.icon-btn:active {
+  transform: translateY(0);
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

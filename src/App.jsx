@@ -1,150 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot } from 'lucide-react';
 import { TabSync } from './tabSync';
+import { ConfigManager } from './components/ConfigManager';
+import {
+  loadConfig,
+  persistConfig,
+  migrateLegacyRecords,
+  sanitizeConfig,
+  evaluateMetric,
+  getStatusNames,
+  getPrimaryStatusName,
+  getStatusIndex,
+  nextStatusName,
+  prevStatusName,
+  buildStatusClass,
+  buildPriorityRankFn,
+  getTatThresholds,
+  buildSearchFields,
+  isCriticalEligible,
+  buildCardMeta,
+  getStatusColor,
+  uid as uidFn
+} from './config/configManager';
 import './App.css';
 
-const appConfig = {
-  "id": "hxwl-61306",
-  "port": 61306,
-  "title": "病理科玻片阅片队列",
-  "subtitle": "优先级、等待时间、阅片状态与详情抽屉",
-  "domain": "病理科",
-  "icon": "Microscope",
-  "storage": "hxwl-61306-pathology-slides",
-  "accent": "#7c3aed",
-  "statuses": [
-    "待阅片",
-    "阅片中",
-    "待复核",
-    "已完成"
-  ],
-  "primaryStatus": "待阅片",
-  "fields": [
-    {
-      "key": "caseNo",
-      "label": "病例号",
-      "type": "input",
-      "placeholder": "P2026061301",
-      "options": []
-    },
-    {
-      "key": "sampleType",
-      "label": "标本类型",
-      "type": "select",
-      "placeholder": "穿刺",
-      "options": [
-        "穿刺",
-        "胃镜",
-        "肠镜",
-        "手术切除",
-        "细胞学"
-      ]
-    },
-    {
-      "key": "priority",
-      "label": "优先级",
-      "type": "select",
-      "placeholder": "加急",
-      "options": [
-        "常规",
-        "加急",
-        "危急"
-      ]
-    },
-    {
-      "key": "sentAt",
-      "label": "送检时间",
-      "type": "datetime-local",
-      "placeholder": "",
-      "options": []
-    },
-    {
-      "key": "doctor",
-      "label": "负责医生",
-      "type": "input",
-      "placeholder": "李医生",
-      "options": []
-    },
-    {
-      "key": "summary",
-      "label": "备注",
-      "type": "textarea",
-      "placeholder": "需关注切缘情况",
-      "options": []
-    }
-  ],
-  "seed": [
-    {
-      "caseNo": "P2026061301",
-      "sampleType": "穿刺",
-      "priority": "加急",
-      "sentAt": "2026-06-13T08:30",
-      "doctor": "李医生",
-      "summary": "需关注切缘情况",
-      "status": "待阅片"
-    },
-    {
-      "caseNo": "P2026061208",
-      "sampleType": "胃镜",
-      "priority": "常规",
-      "sentAt": "2026-06-12T15:10",
-      "doctor": "王医生",
-      "summary": "慢性炎症复核",
-      "status": "阅片中"
-    },
-    {
-      "caseNo": "P2026061117",
-      "sampleType": "手术切除",
-      "priority": "危急",
-      "sentAt": "2026-06-11T10:20",
-      "doctor": "周医生",
-      "summary": "疑似恶性，等待复核",
-      "status": "待复核"
-    }
-  ],
-  "metrics": [
-    [
-      "队列病例",
-      "records.length"
-    ],
-    [
-      "危急/加急",
-      "records.filter((item) => item.priority !== '常规').length"
-    ],
-    [
-      "待复核",
-      "records.filter((item) => item.status === '待复核').length"
-    ]
-  ],
-  "filters": [
-    {
-      "key": "query",
-      "label": "病例/医生",
-      "type": "search",
-      "match": "`${item.caseNo}${item.doctor}`.includes(filters.query)"
-    },
-    {
-      "key": "status",
-      "label": "阅片状态",
-      "type": "status"
-    }
-  ],
-  "cardTitle": "item.caseNo",
-  "cardMeta": "`${item.sampleType} · ${item.priority} · ${item.doctor}`",
-  "cardDetail": "item.summary",
-  "dateKey": "sentAt",
-  "sort": "priority",
-  "note": "首页按优先级和等待时间排序，并提供详情抽屉。",
-  "defaultValues": {
-    "caseNo": "P2026061301",
-    "sampleType": "穿刺",
-    "priority": "加急",
-    "sentAt": "",
-    "doctor": "李医生",
-    "summary": "需关注切缘情况",
-    "status": "待阅片"
-  }
+const INITIAL_CONFIG = sanitizeConfig(loadConfig());
+
+const ICON_MAP = {
+  Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays,
+  FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save,
+  UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home,
+  CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail,
+  Megaphone, HandHeart, Timer, Radio, Settings, CircleDot
 };
+
+function safeGetIcon(iconName) {
+  return ICON_MAP[iconName] || CircleDot;
+}
 
 const SLIDE_BORROW_STORAGE = 'hxwl-61306-slide-borrow';
 const SLIDE_BORROW_STATUS = {
@@ -383,8 +275,8 @@ function hasDuplicateUnconfirmedNotify(caseId, caseNo, notifyTarget, notifies) {
   });
 }
 
-function isCriticalNotifyEligible(record) {
-  return !!record && (record.priority === '危急' || record.status === '待复核');
+function isCriticalNotifyEligible(config, record) {
+  return isCriticalEligible(config, record);
 }
 
 function formatDateTime(dateStr) {
@@ -404,23 +296,31 @@ function formatDateTime(dateStr) {
 const today = new Date().toISOString().slice(0, 10);
 
 function uid() {
-  return Math.random().toString(36).slice(2, 10);
+  return uidFn();
 }
 
-function withIds(items) {
-  return items.map((item) => ({ id: uid(), timeline: item.timeline || [{ status: item.status, at: today, by: '系统', changedAt: new Date().toISOString() }], ...item }));
+function withIds(config, items) {
+  const primary = getPrimaryStatusName(config);
+  return items.map((item) => ({
+    id: uid(),
+    timeline: item.timeline || [{ status: item.status || primary, at: today, by: '系统', changedAt: new Date().toISOString() }],
+    status: item.status || primary,
+    ...item
+  }));
 }
 
-function loadRecords() {
-  const raw = localStorage.getItem(appConfig.storage);
+function loadRecords(config) {
+  const storageKey = config.storage || INITIAL_CONFIG.storage;
+  const raw = localStorage.getItem(storageKey);
   if (raw) {
     try {
-      return JSON.parse(raw);
+      const data = JSON.parse(raw);
+      return migrateLegacyRecords(data, config);
     } catch {
-      return withIds(appConfig.seed);
+      return withIds(config, config.seedData);
     }
   }
-  return withIds(appConfig.seed);
+  return withIds(config, config.seedData || INITIAL_CONFIG.seedData);
 }
 
 function loadSlideBorrows() {
@@ -581,8 +481,9 @@ function hasHotTemp(item) {
   return temps.some((value) => Number(value) > 2);
 }
 
-function priorityRank(value) {
-  return { 危急: 0, 加急: 1, 常规: 2, 高: 0, 中: 1, 低: 2 }[value] ?? 9;
+function priorityRank(config, value) {
+  const rankFn = buildPriorityRankFn(config);
+  return rankFn(value);
 }
 
 function hasOverlap(target, records) {
@@ -590,23 +491,31 @@ function hasOverlap(target, records) {
   return records.some((item) => item.id !== target.id && item.bed === target.bed && item.date === target.date && target.start < item.end && target.end > item.start);
 }
 
-function statusClass(status) {
-  const index = appConfig.statuses.indexOf(status);
-  return ['status-a', 'status-b', 'status-c', 'status-d'][index] || 'status-a';
+function statusClass(config, status) {
+  return buildStatusClass(config, status);
 }
 
-const WORKBENCH_ZONES = [
-  { key: 'urgent', label: '优先处理', status: '待阅片', icon: Zap, color: '#ef4444' },
-  { key: 'reading', label: '正在阅片', status: '阅片中', icon: Eye, color: '#7c3aed' },
-  { key: 'review', label: '等待复核', status: '待复核', icon: ShieldCheck, color: '#f59e0b' },
-  { key: 'done', label: '已完成', status: '已完成', icon: CircleCheckBig, color: '#10b981' },
-];
+function buildWorkbenchZones(config) {
+  return (config.statuses || []).map((s, idx) => {
+    const keys = ['urgent', 'reading', 'review', 'done', 'custom'];
+    const labels = { '待阅片': '优先处理', '阅片中': '正在阅片', '待复核': '等待复核', '已完成': '已完成' };
+    return {
+      key: s.key || s.id || keys[idx] || `zone_${idx}`,
+      label: labels[s.name] || s.name,
+      status: s.name,
+      icon: safeGetIcon(s.icon),
+      color: s.color || '#6b7280',
+      order: s.order ?? idx
+    };
+  }).sort((a, b) => a.order - b.order);
+}
 
-function waitDuration(item) {
+function waitDuration(config, item) {
   const now = Date.now();
   const timeline = item.timeline || [];
   const lastEntry = timeline[timeline.length - 1];
-  const startMs = [item.sentAt, item.createdAt, lastEntry?.changedAt]
+  const dateKey = config.sortConfig?.secondaryField || config.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+  const startMs = [item[dateKey], item.sentAt, item.createdAt, lastEntry?.changedAt]
     .map((value) => new Date(value).getTime())
     .find((value) => Number.isFinite(value)) ?? now;
   const diffMs = Math.max(0, now - startMs);
@@ -619,25 +528,15 @@ function waitDuration(item) {
   return `${mins}分`;
 }
 
-function nextStatus(current) {
-  const idx = appConfig.statuses.indexOf(current);
-  if (idx < 0 || idx >= appConfig.statuses.length - 1) return null;
-  return appConfig.statuses[idx + 1];
+function nextStatus(config, current) {
+  return nextStatusName(config, current);
 }
 
-function prevStatus(current) {
-  const idx = appConfig.statuses.indexOf(current);
-  if (idx <= 0) return null;
-  return appConfig.statuses[idx - 1];
+function prevStatus(config, current) {
+  return prevStatusName(config, current);
 }
 
 const REVIEW_CONCLUSIONS = ['通过', '修改后通过', '退回重审'];
-
-const TAT_THRESHOLDS = {
-  '危急': { timeout: 2 * 60, warning: 1 * 60 },
-  '加急': { timeout: 24 * 60, warning: 12 * 60 },
-  '常规': { timeout: 72 * 60, warning: 48 * 60 },
-};
 
 const TAT_STATUS = {
   NORMAL: 'normal',
@@ -646,14 +545,15 @@ const TAT_STATUS = {
   UNKNOWN: 'unknown',
 };
 
-function getTatThresholds(priority) {
-  return TAT_THRESHOLDS[priority] || TAT_THRESHOLDS['常规'];
+function getTatThresholdsFor(config, priority) {
+  return getTatThresholds(config, priority);
 }
 
-function getStartTime(item) {
+function getStartTime(config, item) {
   const timeline = item.timeline || [];
   const firstEntry = timeline[0];
-  const candidates = [item.sentAt, item.createdAt, firstEntry?.changedAt];
+  const dateKey = config.sortConfig?.secondaryField || config.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+  const candidates = [item[dateKey], item.sentAt, item.createdAt, firstEntry?.changedAt];
   for (const value of candidates) {
     if (value) {
       const ms = new Date(value).getTime();
@@ -663,11 +563,13 @@ function getStartTime(item) {
   return null;
 }
 
-function getEndTime(item) {
-  if (item.status !== '已完成') return null;
+function getEndTime(config, item) {
+  const terminalStatuses = (config.statuses || []).filter((s) => s.terminal).map((s) => s.name);
+  const completedStatuses = terminalStatuses.length > 0 ? terminalStatuses : ['已完成'];
+  if (!completedStatuses.includes(item.status)) return null;
   const timeline = item.timeline || [];
   for (let i = timeline.length - 1; i >= 0; i--) {
-    if (timeline[i].status === '已完成') {
+    if (completedStatuses.includes(timeline[i].status)) {
       const ms = new Date(timeline[i].changedAt).getTime();
       if (Number.isFinite(ms)) return ms;
     }
@@ -675,8 +577,8 @@ function getEndTime(item) {
   return null;
 }
 
-function calcTatInfo(item) {
-  const startMs = getStartTime(item);
+function calcTatInfo(config, item) {
+  const startMs = getStartTime(config, item);
   const now = Date.now();
 
   if (!startMs) {
@@ -689,14 +591,20 @@ function calcTatInfo(item) {
     };
   }
 
-  const endMs = getEndTime(item);
+  const endMs = getEndTime(config, item);
   const refMs = endMs || now;
   const waitedMinutes = Math.floor((refMs - startMs) / 60000);
-  const thresholds = getTatThresholds(item.priority);
+  const priorityKey = config.priorityConfig?.fieldKey || 'priority';
+  const thresholds = getTatThresholdsFor(config, item[priorityKey]);
   const timeoutMinutes = thresholds.timeout;
   const warningMinutes = thresholds.warning;
 
-  if (item.status === '已完成') {
+  const terminalStatuses = (config.statuses || []).filter((s) => s.terminal).map((s) => s.name);
+  const isCompleted = terminalStatuses.length > 0
+    ? terminalStatuses.includes(item.status)
+    : item.status === '已完成';
+
+  if (isCompleted) {
     const isOverdue = waitedMinutes > timeoutMinutes;
     return {
       status: isOverdue ? TAT_STATUS.OVERDUE : TAT_STATUS.NORMAL,
@@ -760,12 +668,17 @@ function tatStatusClass(status) {
 }
 
 function App() {
-  const [records, setRecords] = useState(loadRecords);
+  const [queueConfig, setQueueConfig] = useState(INITIAL_CONFIG);
+  const [showConfigManager, setShowConfigManager] = useState(false);
+  const [records, setRecords] = useState(() => loadRecords(INITIAL_CONFIG));
   const tabSyncRef = useRef(null);
   const [activeTabCount, setActiveTabCount] = useState(1);
   const [conflictInfo, setConflictInfo] = useState(null);
   const [showConflictModal, setShowConflictModal] = useState(false);
-  const [form, setForm] = useState(appConfig.defaultValues);
+  const [form, setForm] = useState({
+    ...INITIAL_CONFIG.defaultValues,
+    status: getPrimaryStatusName(INITIAL_CONFIG)
+  });
   const [filters, setFilters] = useState({ query: '', status: '全部' });
   const [selected, setSelected] = useState(null);
   const [batchOpen, setBatchOpen] = useState(false);
@@ -832,13 +745,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const initialRecords = loadRecords();
-    const tabSync = new TabSync(appConfig.storage, {
+    const initialRecords = loadRecords(queueConfig);
+    const storageKey = queueConfig.storage || INITIAL_CONFIG.storage;
+    const tabSync = new TabSync(storageKey, {
       onExternalUpdate: (externalRecords) => {
-        setRecords(externalRecords);
+        const migrated = migrateLegacyRecords(externalRecords, queueConfig);
+        setRecords(migrated);
         setSelected((prevSelected) => {
           if (!prevSelected) return null;
-          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
+          const updatedSelected = migrated.find((r) => r.id === prevSelected.id);
           return updatedSelected || null;
         });
       },
@@ -856,7 +771,25 @@ function App() {
     return () => {
       tabSync.destroy();
     };
-  }, []);
+  }, [queueConfig]);
+
+  function handleConfigSave(newConfig) {
+    const sanitized = sanitizeConfig(newConfig);
+    setQueueConfig(sanitized);
+    const migratedRecords = migrateLegacyRecords(records, sanitized);
+    if (migratedRecords.length !== records.length || JSON.stringify(migratedRecords) !== JSON.stringify(records)) {
+      setRecords(migratedRecords);
+      if (tabSyncRef.current) {
+        tabSyncRef.current.persist(migratedRecords);
+      }
+    }
+    setForm({
+      ...sanitized.defaultValues,
+      status: getPrimaryStatusName(sanitized)
+    });
+    localStorage.setItem(sanitized.storage || INITIAL_CONFIG.storage,
+      localStorage.getItem(sanitized.storage || INITIAL_CONFIG.storage) || '[]');
+  }
 
   useEffect(() => {
     if (selected) {
@@ -939,16 +872,12 @@ function App() {
     setReviewEditing(true);
   }
 
-  const BATCH_FIELDS = [
-    { key: 'caseNo', label: '病例号', required: true },
-    { key: 'sampleType', label: '标本类型', required: false },
-    { key: 'priority', label: '优先级', required: false },
-    { key: 'sentAt', label: '送检时间', required: false },
-    { key: 'doctor', label: '负责医生', required: false },
-    { key: 'summary', label: '备注', required: false },
-  ];
+  const BATCH_FIELDS = queueConfig.batchImport?.fields || queueConfig.fields.map((f) => ({
+    key: f.key, label: f.label, required: !!f.required
+  }));
 
-  const HEADER_KEYWORDS = ['病例号', '标本类型', '优先级', '送检时间', '负责医生', '备注', 'caseno', 'sampletype', 'priority', 'sentat', 'doctor', 'summary'];
+  const HEADER_KEYWORDS = queueConfig.batchImport?.headerKeywords ||
+    queueConfig.fields.flatMap((f) => [f.label, f.key.toLowerCase()]);
 
   function parseBatchLines(raw) {
     const lines = raw.split('\n').map((l) => l.trimEnd()).filter(Boolean);
@@ -956,7 +885,7 @@ function App() {
 
     let startIndex = 0;
     const firstLine = lines[0].toLowerCase();
-    if (HEADER_KEYWORDS.some((kw) => firstLine.includes(kw))) {
+    if (HEADER_KEYWORDS.some((kw) => firstLine.includes(String(kw).toLowerCase()))) {
       startIndex = 1;
     }
 
@@ -964,6 +893,7 @@ function App() {
     const existingCaseNos = new Set(records.map((r) => r.caseNo));
     const seenCaseNos = new Set();
     const parsed = [];
+    const primaryStatus = getPrimaryStatusName(queueConfig);
 
     for (let i = startIndex; i < lines.length; i++) {
       const rawLine = lines[i];
@@ -989,14 +919,16 @@ function App() {
         .filter((f) => !f.required && !record[f.key])
         .map((f) => f.label);
 
-      const duplicate = record.caseNo && (existingCaseNos.has(record.caseNo) || seenCaseNos.has(record.caseNo));
+      const idField = BATCH_FIELDS[0]?.key || 'caseNo';
+      const idValue = record[idField];
+      const duplicate = idValue && (existingCaseNos.has(idValue) || seenCaseNos.has(idValue));
 
-      if (record.caseNo) seenCaseNos.add(record.caseNo);
+      if (idValue) seenCaseNos.add(idValue);
 
       parsed.push({
         _id: uid(),
         ...record,
-        status: appConfig.primaryStatus,
+        status: record.status || primaryStatus,
         _missingRequired: missingRequired,
         _missingOptional: missingOptional,
         _duplicate: duplicate,
@@ -1017,18 +949,27 @@ function App() {
     if (!valid.length) return;
 
     const now = new Date().toISOString();
-    const newRecords = valid.map((r) => ({
-      id: uid(),
-      caseNo: r.caseNo,
-      sampleType: r.sampleType || '',
-      priority: r.priority || '常规',
-      sentAt: r.sentAt || '',
-      doctor: r.doctor || '',
-      summary: r.summary || '',
-      status: appConfig.primaryStatus,
-      createdAt: now,
-      timeline: [{ status: appConfig.primaryStatus, at: today, by: '批量导入', changedAt: new Date().toISOString() }],
-    }));
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const priorityField = queueConfig.priorityConfig?.fieldKey;
+    const defaultPriority = queueConfig.priorityConfig?.order?.[queueConfig.priorityConfig.order.length - 1] || '常规';
+
+    const newRecords = valid.map((r) => {
+      const recordData = {};
+      BATCH_FIELDS.forEach((field) => {
+        const val = r[field.key];
+        if (val !== undefined && val !== null) recordData[field.key] = val;
+      });
+      if (priorityField && !recordData[priorityField]) {
+        recordData[priorityField] = defaultPriority;
+      }
+      return {
+        id: uid(),
+        ...recordData,
+        status: r.status || primaryStatus,
+        createdAt: now,
+        timeline: [{ status: r.status || primaryStatus, at: today, by: '批量导入', changedAt: new Date().toISOString() }],
+      };
+    });
 
     persist([...newRecords, ...records]);
     setBatchOpen(false);
@@ -1098,20 +1039,29 @@ function App() {
     const failed = [];
     const skipped = [];
 
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const nonDispatchableStatuses = getStatusNames(queueConfig).filter(
+      (s, idx) => idx > 0 && idx !== getStatusNames(queueConfig).indexOf(primaryStatus)
+    );
+    const terminalStatuses = queueConfig.statuses.filter((s) => s.terminal).map((s) => s.name);
+    const caseNoField = queueConfig.cardDisplay?.titleField || 'caseNo';
+    const doctorField = queueConfig.fields.find((f) => f.label.includes('医生'))?.key || 'doctor';
+
     const next = records.map((item) => {
       if (!selectedCases.has(item.id)) return item;
 
-      if (item.doctor && item.doctor.trim() === targetDoctor && item.status !== '已完成') {
+      const itemDoctor = item[doctorField];
+      if (itemDoctor && String(itemDoctor).trim() === targetDoctor && !terminalStatuses.includes(item.status)) {
         skipped.push({
-          caseNo: item.caseNo,
+          caseNo: item[caseNoField] || item.id,
           reason: `已由${targetDoctor}负责`
         });
         return item;
       }
 
-      if (item.status === '阅片中' || item.status === '待复核' || item.status === '已完成') {
+      if (nonDispatchableStatuses.includes(item.status) || terminalStatuses.includes(item.status)) {
         skipped.push({
-          caseNo: item.caseNo,
+          caseNo: item[caseNoField] || item.id,
           reason: `当前状态为「${item.status}」，不可重新派单`
         });
         return item;
@@ -1120,7 +1070,7 @@ function App() {
       try {
         const updatedItem = {
           ...item,
-          doctor: targetDoctor,
+          [doctorField]: targetDoctor,
           timeline: [
             ...(item.timeline || []),
             {
@@ -1129,16 +1079,16 @@ function App() {
               by: '调度员',
               changedAt: now,
               action: 'assign',
-              fromDoctor: item.doctor || '未分配',
+              fromDoctor: itemDoctor || '未分配',
               toDoctor: targetDoctor
             }
           ]
         };
-        success.push({ caseNo: item.caseNo });
+        success.push({ caseNo: item[caseNoField] || item.id });
         return updatedItem;
       } catch (error) {
         failed.push({
-          caseNo: item.caseNo,
+          caseNo: item[caseNoField] || item.id,
           reason: error.message || '系统错误'
         });
         return item;
@@ -1161,7 +1111,7 @@ function App() {
       const successIds = new Set(success.map((s) => s.caseNo));
       const remaining = new Set(selectedCases);
       records.forEach((item) => {
-        if (successIds.has(item.caseNo)) {
+        if (successIds.has(item[caseNoField])) {
           remaining.delete(item.id);
         }
       });
@@ -1414,7 +1364,7 @@ function App() {
     const now = new Date().toISOString();
     const caseNo = notifyForm.caseNo.trim();
     const caseRecord = records.find((r) => r.caseNo === caseNo);
-    if (!isCriticalNotifyEligible(caseRecord)) {
+    if (!isCriticalNotifyEligible(queueConfig, caseRecord)) {
       setNotifyDuplicateWarning('仅支持为优先级为「危急」或状态为「待复核」的病例创建通知，请先选择符合条件的病例');
       return;
     }
@@ -1913,28 +1863,20 @@ function App() {
 
   function addRecord(event) {
     event.preventDefault();
+    const primaryStatus = getPrimaryStatusName(queueConfig);
     const nextRecord = {
       id: uid(),
       ...form,
-      status: form.status || appConfig.primaryStatus,
+      status: form.status || primaryStatus,
       createdAt: new Date().toISOString(),
-      timeline: [{ status: form.status || appConfig.primaryStatus, at: today, by: '录入', changedAt: new Date().toISOString() }]
+      timeline: [{ status: form.status || primaryStatus, at: today, by: '录入', changedAt: new Date().toISOString() }]
     };
 
-    if (appConfig.conflict === 'date-slot' && records.some((item) => item.date === nextRecord.date && item.slot === nextRecord.slot)) {
-      nextRecord.conflict = true;
-    }
-    if (appConfig.conflict === 'bed-time' && hasOverlap(nextRecord, records)) {
-      nextRecord.conflict = true;
-    }
-    if (appConfig.chart) {
-      const temp = Number(nextRecord.temperature || 0);
-      nextRecord.temps = [temp];
-      if (temp > 2) nextRecord.status = '异常';
-    }
-
     persist([nextRecord, ...records]);
-    setForm(appConfig.defaultValues);
+    setForm({
+      ...queueConfig.defaultValues,
+      status: primaryStatus
+    });
     setSelected(nextRecord);
   }
 
@@ -1956,7 +1898,8 @@ function App() {
   }
 
   function duplicateRecord(item) {
-    const copied = { ...item, id: uid(), status: appConfig.primaryStatus, timeline: [{ status: appConfig.primaryStatus, at: today, by: '复制', changedAt: new Date().toISOString() }] };
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const copied = { ...item, id: uid(), status: primaryStatus, timeline: [{ status: primaryStatus, at: today, by: '复制', changedAt: new Date().toISOString() }] };
     persist([copied, ...records]);
     setSelected(copied);
   }
@@ -1975,33 +1918,54 @@ function App() {
   }
 
   const filteredRecords = useMemo(() => {
+    const searchFields = buildSearchFields(queueConfig);
+    const sortField = queueConfig.sortConfig?.primaryField;
+    const sortSecondary = queueConfig.sortConfig?.secondaryField;
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+
     return records
-      .filter((item) => !filters.query || `${item.caseNo}${item.doctor}`.includes(filters.query))
+      .filter((item) => {
+        if (!filters.query) return true;
+        const q = String(filters.query).toLowerCase();
+        return searchFields.some((f) => String(item?.[f] ?? '').toLowerCase().includes(q));
+      })
       .filter((item) => filters.status === '全部' || item.status === filters.status)
       .sort((a, b) => {
-        if (appConfig.sort === 'priority') {
-          const rank = priorityRank(a.priority) - priorityRank(b.priority);
-          if (rank !== 0) return rank;
+        if (sortField) {
+          const sortableField = queueConfig.fields?.find((f) => f.key === sortField);
+          if (sortableField?.sortWeights && Object.keys(sortableField.sortWeights).length) {
+            const rankA = sortableField.sortWeights[a?.[sortField]] ?? 9;
+            const rankB = sortableField.sortWeights[b?.[sortField]] ?? 9;
+            if (rankA !== rankB) return rankA - rankB;
+          } else if (sortableField?.sortable) {
+            const rank = priorityRank(queueConfig, a[sortField]) - priorityRank(queueConfig, b[sortField]);
+            if (rank !== 0) return rank;
+          }
         }
-        const aDate = a[appConfig.dateKey] || a.sentAt || a.createdAt || '';
-        const bDate = b[appConfig.dateKey] || b.sentAt || b.createdAt || '';
+        const aDate = a[sortSecondary] || a[dateField] || a.createdAt || '';
+        const bDate = b[sortSecondary] || b[dateField] || b.createdAt || '';
         return String(aDate).localeCompare(String(bDate));
       });
-  }, [records, filters]);
+  }, [records, filters, queueConfig]);
 
-  const metrics = [
-    { label: "队列病例", value: records.length },
-    { label: "危急/加急", value: records.filter((item) => item.priority !== '常规').length },
-    { label: "待复核", value: records.filter((item) => item.status === '待复核').length },
-  ];
+  const metrics = useMemo(() => {
+    return (queueConfig.metrics || [])
+      .filter((m) => m.enabled)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((metric) => ({
+        label: metric.label,
+        value: evaluateMetric(metric, records)
+      }));
+  }, [records, queueConfig.metrics]);
 
   const groupedByDate = useMemo(() => {
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
     return filteredRecords.reduce((acc, item) => {
-      const key = item[appConfig.dateKey] || item.date || item.enrollDate || '未排期';
+      const key = item[dateField] || item.date || item.enrollDate || '未排期';
       (acc[key] ||= []).push(item);
       return acc;
     }, {});
-  }, [filteredRecords]);
+  }, [filteredRecords, queueConfig.fields]);
 
   const directory = useMemo(() => {
     return records.reduce((acc, item) => {
@@ -2013,93 +1977,135 @@ function App() {
 
   const workbenchGroups = useMemo(() => {
     void tick;
-    return WORKBENCH_ZONES.map((zone) => ({
-      ...zone,
-      items: records
-        .filter((item) => item.status === zone.status)
-        .sort((a, b) => {
-          if (zone.status === '待阅片') {
-            const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
-            if (rankDiff !== 0) return rankDiff;
-          }
-          const aTime = a.sentAt || a.createdAt || '';
-          const bTime = b.sentAt || b.createdAt || '';
-          return String(aTime).localeCompare(String(bTime));
-        }),
-    }));
-  }, [records, tick]);
+    const statuses = queueConfig.statuses || [];
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    return statuses
+      .filter((s) => !s.terminal)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((statusDef) => ({
+        id: statusDef.id,
+        status: statusDef.name,
+        color: statusDef.color,
+        icon: statusDef.icon,
+        items: records
+          .filter((item) => item.status === statusDef.name)
+          .sort((a, b) => {
+            if (statusDef.name === primaryStatus) {
+              const rankDiff = priorityRank(queueConfig, a[priorityField]) - priorityRank(queueConfig, b[priorityField]);
+              if (rankDiff !== 0) return rankDiff;
+            }
+            const aTime = a[dateField] || a.createdAt || '';
+            const bTime = b[dateField] || b.createdAt || '';
+            return String(aTime).localeCompare(String(bTime));
+          }),
+      }));
+  }, [records, tick, queueConfig]);
 
   const doctorList = useMemo(() => {
     const doctors = new Set();
+    const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
     records.forEach((item) => {
-      if (item.doctor) doctors.add(item.doctor);
+      if (item[doctorField]) doctors.add(item[doctorField]);
     });
     return Array.from(doctors).sort();
-  }, [records]);
+  }, [records, queueConfig]);
 
   const sampleTypeList = useMemo(() => {
     const types = new Set();
+    const sampleField = queueConfig.fields?.find((f) => f.key === 'sampleType')?.key || 'sampleType';
     records.forEach((item) => {
-      if (item.sampleType) types.add(item.sampleType);
+      if (item[sampleField]) types.add(item[sampleField]);
     });
     return Array.from(types).sort();
-  }, [records]);
+  }, [records, queueConfig]);
 
   const doctorWorkload = useMemo(() => {
     void tick;
+    const statusNames = getStatusNames(queueConfig);
+    const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
     const workload = {};
     records.forEach((item) => {
-      if (!item.doctor) return;
-      if (!workload[item.doctor]) {
-        workload[item.doctor] = {
-          doctor: item.doctor,
+      if (!item[doctorField]) return;
+      if (!workload[item[doctorField]]) {
+        workload[item[doctorField]] = {
+          doctor: item[doctorField],
           pending: 0,
           reading: 0,
           reviewing: 0,
+          completed: 0,
           total: 0,
           cases: []
         };
       }
-      workload[item.doctor].total++;
-      workload[item.doctor].cases.push(item);
-      if (item.status === '待阅片') workload[item.doctor].pending++;
-      else if (item.status === '阅片中') workload[item.doctor].reading++;
-      else if (item.status === '待复核') workload[item.doctor].reviewing++;
+      workload[item[doctorField]].total++;
+      workload[item[doctorField]].cases.push(item);
+      const status = item.status;
+      if (status === statusNames[0]) workload[item[doctorField]].pending++;
+      else if (status === statusNames[1]) workload[item[doctorField]].reading++;
+      else if (status === statusNames[2]) workload[item[doctorField]].reviewing++;
+      else if (status === statusNames[3]) workload[item[doctorField]].completed++;
     });
     return Object.values(workload).sort((a, b) => b.total - a.total);
-  }, [records, tick]);
+  }, [records, tick, queueConfig]);
 
   const unassignedCases = useMemo(() => {
     void tick;
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+    const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
+    const caseNoField = queueConfig.fields?.find((f) => f.key === 'caseNo')?.key || 'caseNo';
+    const summaryField = queueConfig.cardDisplay?.detailField || 'summary';
+    const searchFields = [caseNoField, summaryField, doctorField];
+    const sampleField = queueConfig.fields?.find((f) => f.key === 'sampleType')?.key || 'sampleType';
+
     return records
-      .filter((item) => !item.doctor || item.doctor.trim() === '')
-      .filter((item) => !dispatchFilters.query || `${item.caseNo}${item.summary}`.includes(dispatchFilters.query))
-      .filter((item) => dispatchFilters.priority === '全部' || item.priority === dispatchFilters.priority)
-      .filter((item) => dispatchFilters.sampleType === '全部' || item.sampleType === dispatchFilters.sampleType)
+      .filter((item) => !item[doctorField] || String(item[doctorField]).trim() === '')
+      .filter((item) => {
+        if (!dispatchFilters.query) return true;
+        const q = String(dispatchFilters.query).toLowerCase();
+        return searchFields.some((f) => String(item?.[f] ?? '').toLowerCase().includes(q));
+      })
+      .filter((item) => dispatchFilters.priority === '全部' || item[priorityField] === dispatchFilters.priority)
+      .filter((item) => dispatchFilters.sampleType === '全部' || item[sampleField] === dispatchFilters.sampleType)
       .sort((a, b) => {
-        const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        const rankDiff = priorityRank(queueConfig, a[priorityField]) - priorityRank(queueConfig, b[priorityField]);
         if (rankDiff !== 0) return rankDiff;
-        const aTime = a.sentAt || a.createdAt || '';
-        const bTime = b.sentAt || b.createdAt || '';
+        const aTime = a[dateField] || a.createdAt || '';
+        const bTime = b[dateField] || b.createdAt || '';
         return String(aTime).localeCompare(String(bTime));
       });
-  }, [records, dispatchFilters, tick]);
+  }, [records, dispatchFilters, tick, queueConfig]);
 
   const pendingReassignCases = useMemo(() => {
     void tick;
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+    const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
+    const caseNoField = queueConfig.fields?.find((f) => f.key === 'caseNo')?.key || 'caseNo';
+    const summaryField = queueConfig.cardDisplay?.detailField || 'summary';
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const searchFields = [caseNoField, doctorField, summaryField];
+    const sampleField = queueConfig.fields?.find((f) => f.key === 'sampleType')?.key || 'sampleType';
+
     return records
-      .filter((item) => item.doctor && item.status === '待阅片')
-      .filter((item) => !dispatchFilters.query || `${item.caseNo}${item.doctor}${item.summary}`.includes(dispatchFilters.query))
-      .filter((item) => dispatchFilters.priority === '全部' || item.priority === dispatchFilters.priority)
-      .filter((item) => dispatchFilters.sampleType === '全部' || item.sampleType === dispatchFilters.sampleType)
+      .filter((item) => item[doctorField] && item.status === primaryStatus)
+      .filter((item) => {
+        if (!dispatchFilters.query) return true;
+        const q = String(dispatchFilters.query).toLowerCase();
+        return searchFields.some((f) => String(item?.[f] ?? '').toLowerCase().includes(q));
+      })
+      .filter((item) => dispatchFilters.priority === '全部' || item[priorityField] === dispatchFilters.priority)
+      .filter((item) => dispatchFilters.sampleType === '全部' || item[sampleField] === dispatchFilters.sampleType)
       .sort((a, b) => {
-        const rankDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        const rankDiff = priorityRank(queueConfig, a[priorityField]) - priorityRank(queueConfig, b[priorityField]);
         if (rankDiff !== 0) return rankDiff;
-        const aTime = a.sentAt || a.createdAt || '';
-        const bTime = b.sentAt || b.createdAt || '';
+        const aTime = a[dateField] || a.createdAt || '';
+        const bTime = b[dateField] || b.createdAt || '';
         return String(aTime).localeCompare(String(bTime));
       });
-  }, [records, dispatchFilters, tick]);
+  }, [records, dispatchFilters, tick, queueConfig]);
 
   const allDispatchableCases = useMemo(() => {
     return [...unassignedCases, ...pendingReassignCases];
@@ -2116,7 +2122,7 @@ function App() {
       .filter((item) => tatFilters.status === '全部' || item.status === tatFilters.status)
       .filter((item) => {
         if (tatFilters.tatStatus === '全部') return true;
-        const tat = calcTatInfo(item);
+        const tat = calcTatInfo(queueConfig, item);
         if (tatFilters.tatStatus === '已超时') return tat.status === TAT_STATUS.OVERDUE;
         if (tatFilters.tatStatus === '即将超时') return tat.status === TAT_STATUS.WARNING;
         if (tatFilters.tatStatus === '正常') return tat.status === TAT_STATUS.NORMAL;
@@ -2124,12 +2130,12 @@ function App() {
         return true;
       })
       .sort((a, b) => {
-        const tatA = calcTatInfo(a);
-        const tatB = calcTatInfo(b);
+        const tatA = calcTatInfo(queueConfig, a);
+        const tatB = calcTatInfo(queueConfig, b);
         const rankA = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatA.status] ?? 9;
         const rankB = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatB.status] ?? 9;
         if (rankA !== rankB) return rankA - rankB;
-        const priorityDiff = priorityRank(a.priority) - priorityRank(b.priority);
+        const priorityDiff = priorityRank(queueConfig, a.priority) - priorityRank(queueConfig, b.priority);
         if (priorityDiff !== 0) return priorityDiff;
         return (tatA.waitedMinutes || 0) - (tatB.waitedMinutes || 0);
       });
@@ -2144,7 +2150,7 @@ function App() {
     const waitTimes = [];
 
     tatFilteredRecords.forEach((item) => {
-      const tat = calcTatInfo(item);
+      const tat = calcTatInfo(queueConfig, item);
       if (tat.hasStartTime) {
         waitTimes.push(tat.waitedMinutes);
       }
@@ -2171,16 +2177,26 @@ function App() {
   }, [tatFilteredRecords, tick]);
 
   return (
-    <main className="shell" style={{ '--accent': appConfig.accent }}>
+    <main className="shell" style={{ '--accent': queueConfig.accent || '#5f69c8' }}>
       <section className="hero">
         <div>
-          <div className="eyebrow"><Microscope size={18} />{appConfig.domain}</div>
-          <h1>{appConfig.title}</h1>
-          <p>{appConfig.subtitle}</p>
+          <div className="eyebrow"><Microscope size={18} />{queueConfig.domain || '病理科'}</div>
+          <h1>{queueConfig.title || '病理科玻片阅片队列'}</h1>
+          <p>{queueConfig.subtitle || '数字化阅片 · 状态流转 · 全流程追踪'}</p>
         </div>
-        <div className="port-card">
-          <span>Local Port</span>
-          <strong>{appConfig.port}</strong>
+        <div className="hero-actions">
+          <button
+            className="icon-btn"
+            type="button"
+            onClick={() => setShowConfigManager(true)}
+            title="队列配置管理"
+          >
+            <Settings size={18} />
+          </button>
+          <div className="port-card">
+            <span>Local Port</span>
+            <strong>{queueConfig.port || '61306'}</strong>
+          </div>
         </div>
       </section>
 
@@ -2246,12 +2262,14 @@ function App() {
         </div>
         <div className="workbench-columns">
           {workbenchGroups.map((zone) => {
-            const ZoneIcon = zone.icon;
+            const ZoneIcon = safeGetIcon(zone.icon || 'CircleDot');
+            const reviewStatus = queueConfig.statuses?.find((s) => s.order === 2)?.name;
+            const isReviewZone = zone.status === reviewStatus;
             return (
-              <div className="workbench-column" key={zone.key}>
+              <div className="workbench-column" key={zone.id || zone.status}>
                 <div className="workbench-column-header" style={{ '--zone-color': zone.color }}>
                   <ZoneIcon size={16} />
-                  <span>{zone.label}</span>
+                  <span>{zone.status}</span>
                   <strong>{zone.items.length}</strong>
                 </div>
                 <div className="workbench-cards">
@@ -2259,26 +2277,33 @@ function App() {
                     <p className="workbench-empty">暂无病例</p>
                   )}
                   {zone.items.map((item) => {
-                    const tat = calcTatInfo(item);
+                    const tat = calcTatInfo(queueConfig, item);
+                    const titleField = queueConfig.cardDisplay?.titleField || 'caseNo';
+                    const metaFields = queueConfig.cardDisplay?.metaFields || ['sampleType', 'doctor'];
+                    const cardMeta = buildCardMeta(queueConfig, item);
                     return (
                     <div className={`workbench-card tat-card-${tat.status}`} key={item.id} onClick={() => setSelected(item)}>
                       <div className="workbench-card-top">
-                        <h3>{item.caseNo}</h3>
-                        <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                        <h3>{item[titleField] || item.id}</h3>
+                        <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
                       </div>
                       <div className="workbench-card-meta">
-                        <span>{item.sampleType}</span>
-                        <span>{item.doctor}</span>
-                        {zone.key === 'review' && (item.reviews || []).length > 0 && (
+                        {metaFields.map((mf) => (
+                          <span key={mf}>{item[mf] ?? ''}</span>
+                        ))}
+                        {cardMeta && (
+                          <span className="wb-meta-extra">{cardMeta}</span>
+                        )}
+                        {isReviewZone && (item.reviews || []).length > 0 && (
                           <span className="wb-review-badge">已复核</span>
                         )}
-                        {zone.key === 'review' && !(item.reviews || []).length && (
+                        {isReviewZone && !(item.reviews || []).length && (
                           <span className="wb-review-badge wb-review-pending">待录入</span>
                         )}
                       </div>
                       <div className="workbench-card-wait">
                         <Clock size={13} />
-                        <span>{waitDuration(item)}</span>
+                        <span>{waitDuration(queueConfig, item)}</span>
                         {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
                           <span className={`wb-tat-badge ${tatStatusClass(tat.status)}`}>
                             {tatStatusLabel(tat.status)}
@@ -2286,14 +2311,14 @@ function App() {
                         )}
                       </div>
                       <div className="workbench-card-actions" onClick={(e) => e.stopPropagation()}>
-                        {prevStatus(item.status) && (
-                          <button className="wb-btn wb-btn-prev" type="button" onClick={() => updateStatus(item.id, prevStatus(item.status))}>
-                            ← {prevStatus(item.status)}
+                        {prevStatus(queueConfig, item.status) && (
+                          <button className="wb-btn wb-btn-prev" type="button" onClick={() => updateStatus(item.id, prevStatus(queueConfig, item.status))}>
+                            ← {prevStatus(queueConfig, item.status)}
                           </button>
                         )}
-                        {nextStatus(item.status) && (
-                          <button className="wb-btn wb-btn-next" type="button" style={{ '--zone-color': zone.color }} onClick={() => updateStatus(item.id, nextStatus(item.status))}>
-                            {nextStatus(item.status)} →
+                        {nextStatus(queueConfig, item.status) && (
+                          <button className="wb-btn wb-btn-next" type="button" style={{ '--zone-color': zone.color }} onClick={() => updateStatus(item.id, nextStatus(queueConfig, item.status))}>
+                            {nextStatus(queueConfig, item.status)} →
                           </button>
                         )}
                       </div>
@@ -2325,7 +2350,7 @@ function App() {
               </select>
               <select value={tatFilters.status} onChange={(e) => setTatFilters({ ...tatFilters, status: e.target.value })}>
                 <option value="全部">全部阅片状态</option>
-                {appConfig.statuses.map((s) => <option key={s}>{s}</option>)}
+                {getStatusNames(queueConfig).map((s) => <option key={s}>{s}</option>)}
               </select>
             </div>
           </div>
@@ -2367,7 +2392,7 @@ function App() {
               <div className="tat-empty">暂无符合条件的病例</div>
             )}
             {tatFilteredRecords.map((item) => {
-              const tat = calcTatInfo(item);
+              const tat = calcTatInfo(queueConfig, item);
               return (
                 <article
                   className={`tat-record tat-${tat.status}`}
@@ -2385,7 +2410,7 @@ function App() {
                       <span>{item.sampleType}</span>
                       <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
                       <span>{item.doctor}</span>
-                      <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                      <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
                     </div>
                   </div>
                   <div className="tat-record-times">
@@ -2424,7 +2449,7 @@ function App() {
             <h2>新增记录</h2>
           </div>
           <div className="form-grid">
-            {appConfig.fields.map((field) => (
+            {queueConfig.fields.map((field) => (
               <label key={field.key} className={field.type === 'textarea' ? 'wide' : ''}>
                 <span>{field.label}</span>
                 {field.type === 'textarea' ? (
@@ -2440,8 +2465,8 @@ function App() {
             ))}
             <label>
               <span>当前状态</span>
-              <select value={form.status || appConfig.primaryStatus} onChange={(event) => setForm({ ...form, status: event.target.value })}>
-                {appConfig.statuses.map((status) => <option key={status}>{status}</option>)}
+              <select value={form.status || getPrimaryStatusName(queueConfig)} onChange={(event) => setForm({ ...form, status: event.target.value })}>
+                {getStatusNames(queueConfig).map((status) => <option key={status}>{status}</option>)}
               </select>
             </label>
           </div>
@@ -2449,33 +2474,37 @@ function App() {
             <button className="primary" type="submit"><Plus size={18} />新增</button>
             <button className="secondary" type="button" onClick={() => setBatchOpen(true)}><FileUp size={18} />批量导入</button>
           </div>
-          <p className="hint">{appConfig.note}</p>
+          <p className="hint">{queueConfig.note || '录入病理信息后会按状态流转至对应工作台。'}</p>
         </form>
 
         <section className="panel list-panel">
           <div className="toolbar">
             <div className="search">
               <Search size={16} />
-              <input value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} placeholder={appConfig.filters[0]?.label || '搜索'} />
+              <input value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} placeholder={queueConfig.filters?.[0]?.label || '搜索病例号/送检医生...'} />
             </div>
             <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
               <option>全部</option>
-              {appConfig.statuses.map((status) => <option key={status}>{status}</option>)}
+              {getStatusNames(queueConfig).map((status) => <option key={status}>{status}</option>)}
             </select>
           </div>
 
           <div className="records">
             {filteredRecords.map((item) => {
-              const tat = calcTatInfo(item);
+              const tat = calcTatInfo(queueConfig, item);
+              const titleField = queueConfig.cardDisplay?.titleField || 'caseNo';
+              const metaFields = queueConfig.cardDisplay?.metaFields || ['sampleType', 'priority', 'doctor'];
+              const detailField = queueConfig.cardDisplay?.detailField || 'summary';
+              const reviewStatus = queueConfig.statuses?.find((s) => s.order === 2)?.name;
               return (
               <article className={`record ${item.conflict || hasOverlap(item, records) ? 'conflict' : ''} tat-list-${tat.status}`} key={item.id} onClick={() => setSelected(item)}>
                 <div className="record-head">
                   <div>
-                    <h3>{item.caseNo}</h3>
-                    <p>{`${item.sampleType} · ${item.priority} · ${item.doctor}`}</p>
+                    <h3>{item[titleField] || item.id}</h3>
+                    <p>{metaFields.map((mf) => item[mf]).filter(Boolean).join(' · ')}</p>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
-                    <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                    <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
                     {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
                       <span className={`record-tat-badge ${tatStatusClass(tat.status)}`}>
                         {tatStatusLabel(tat.status)}
@@ -2492,8 +2521,8 @@ function App() {
                     </span>
                   )}
                 </div>
-                <p className="record-detail">{item.summary}</p>
-                {item.status === '待复核' && (item.reviews || []).length > 0 && (
+                <p className="record-detail">{item[detailField] || ''}</p>
+                {item.status === reviewStatus && (item.reviews || []).length > 0 && (
                   <div className="record-review-hint">
                     <ShieldCheck size={13} />
                     <span>已复核（{(item.reviews || []).slice(-1)[0]?.conclusion}）</span>
@@ -2501,11 +2530,10 @@ function App() {
                 )}
                 {(item.conflict || hasOverlap(item, records)) && <div className="warning"><AlertTriangle size={15} />发现冲突</div>}
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
-                  {appConfig.statuses.map((status) => (
+                  {getStatusNames(queueConfig).map((status) => (
                     <button key={status} type="button" onClick={() => updateStatus(item.id, status)}>{status}</button>
                   ))}
-                  {appConfig.action === 'copyRecipe' && <button type="button" onClick={() => duplicateRecord(item)}><RotateCcw size={14} />复制</button>}
-                  {appConfig.chart && <button type="button" onClick={() => addTemperature(item)}>加温度</button>}
+                  <button type="button" onClick={() => duplicateRecord(item)}><RotateCcw size={14} />复制</button>
                   <button className="ghost-danger" type="button" onClick={() => removeRecord(item.id)}><Trash2 size={14} /></button>
                 </div>
               </article>
@@ -2519,9 +2547,9 @@ function App() {
         <div className="panel">
           <div className="panel-title">
             <CalendarDays size={18} />
-            <h2>{appConfig.directory ? '证据目录预览' : appConfig.board ? '床位看板' : '分组视图'}</h2>
+            <h2>分组视图</h2>
           </div>
-          {appConfig.directory ? (
+          {false ? (
             <div className="directory">
               {Object.entries(directory).map(([issue, items]) => (
                 <div key={issue} className="directory-group">
@@ -2946,7 +2974,7 @@ function App() {
                         {wl.cases.slice(0, 5).map((item) => (
                           <div key={item.id} className="workload-case-item">
                             <span>{item.caseNo}</span>
-                            <span className={`status ${statusClass(item.status)}`}>{item.status}</span>
+                            <span className={`status ${statusClass(queueConfig, item.status)}`}>{item.status}</span>
                           </div>
                         ))}
                         {wl.cases.length > 5 && (
@@ -3118,7 +3146,7 @@ function App() {
                   </div>
                 )}
                 {allDispatchableCases.map((item) => {
-                  const tat = calcTatInfo(item);
+                  const tat = calcTatInfo(queueConfig, item);
                   const isSelected = selectedCases.has(item.id);
                   const isReassign = !!item.doctor;
                   return (
@@ -3146,7 +3174,7 @@ function App() {
                         </div>
                         <div className="case-meta">
                           <span>{item.sampleType}</span>
-                          <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                          <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
                           {tat.status !== TAT_STATUS.NORMAL && tat.status !== TAT_STATUS.UNKNOWN && (
                             <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
                               {tatStatusLabel(tat.status)}
@@ -3160,7 +3188,7 @@ function App() {
                             送检：{item.sentAt ? new Date(item.sentAt).toLocaleString('zh-CN') : '未填写'}
                           </span>
                           <span className="case-wait">
-                            等待：{waitDuration(item)}
+                            等待：{waitDuration(queueConfig, item)}
                           </span>
                         </div>
                       </div>
@@ -4055,7 +4083,7 @@ function App() {
                     value={phraseForm.sampleType}
                     onChange={(e) => setPhraseForm({ ...phraseForm, sampleType: e.target.value })}
                   >
-                    {appConfig.fields.find((f) => f.key === 'sampleType')?.options.map((t) => (
+                    {queueConfig.fields.find((f) => f.key === 'sampleType')?.options.map((t) => (
                       <option key={t}>{t}</option>
                     ))}
                   </select>
@@ -4326,7 +4354,7 @@ function App() {
                     <div key={item.id} className="confirm-item">
                       <span>{item.caseNo}</span>
                       <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
-                      <span className={'status ' + statusClass(item.status)}>{item.status}</span>
+                      <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
                     </div>
                   ))}
                   {selectedCasesData.length > 5 && (
@@ -4481,7 +4509,7 @@ function App() {
                           <div className="conflict-case-side conflict-side-local">
                             <div className="conflict-side-label">本页版本</div>
                             <div className="conflict-side-content">
-                              <span className={'status ' + statusClass(c.localRecord.status)}>{c.localRecord.status}</span>
+                              <span className={'status ' + statusClass(queueConfig, c.localRecord.status)}>{c.localRecord.status}</span>
                               <span>{c.localRecord.doctor}</span>
                               <span>{c.localRecord.priority}</span>
                               {(c.localRecord.reviews || []).length > 0 && (
@@ -4494,7 +4522,7 @@ function App() {
                           <div className="conflict-case-side conflict-side-external">
                             <div className="conflict-side-label">外部版本</div>
                             <div className="conflict-side-content">
-                              <span className={'status ' + statusClass(c.externalRecord.status)}>{c.externalRecord.status}</span>
+                              <span className={'status ' + statusClass(queueConfig, c.externalRecord.status)}>{c.externalRecord.status}</span>
                               <span>{c.externalRecord.doctor}</span>
                               <span>{c.externalRecord.priority}</span>
                               {(c.externalRecord.reviews || []).length > 0 && (
@@ -4603,7 +4631,7 @@ function App() {
                             <h3>{r.caseNo || '(无病例号)'}</h3>
                             <p>{[r.sampleType, r.priority, r.doctor].filter(Boolean).join(' · ') || '无详细信息'}</p>
                           </div>
-                          <span className={'status ' + statusClass(r.status)}>{r.status}</span>
+                          <span className={'status ' + statusClass(queueConfig, r.status)}>{r.status}</span>
                         </div>
                         {r.summary && <p className="record-detail">{r.summary}</p>}
                         {r.sentAt && <p className="record-detail">送检时间：{r.sentAt}</p>}
@@ -4632,6 +4660,14 @@ function App() {
           </div>
         </div>
       )}
+
+      <ConfigManager
+        isOpen={showConfigManager}
+        onClose={() => setShowConfigManager(false)}
+        onSave={handleConfigSave}
+        currentConfig={queueConfig}
+        records={records}
+      />
     </main>
   );
 }
