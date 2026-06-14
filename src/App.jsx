@@ -742,7 +742,10 @@ function buildSortFnFromConfig(config) {
   return (a, b) => {
     if (primaryField) {
       const sortableField = config.fields?.find((f) => f.key === primaryField);
-      if (sortableField?.sortWeights && Object.keys(sortableField.sortWeights).length) {
+      if (primaryField === priorityField && config.priorityConfig?.order?.length) {
+        const rank = priorityRank(config, a[primaryField]) - priorityRank(config, b[primaryField]);
+        if (rank !== 0) return rank * dirMultiplier;
+      } else if (sortableField?.sortWeights && Object.keys(sortableField.sortWeights).length) {
         const rankA = sortableField.sortWeights[a?.[primaryField]] ?? 99;
         const rankB = sortableField.sortWeights[b?.[primaryField]] ?? 99;
         if (rankA !== rankB) return (rankA - rankB) * dirMultiplier;
