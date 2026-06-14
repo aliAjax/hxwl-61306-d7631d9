@@ -43,10 +43,11 @@ const SLIDE_BORROW_STATUS = {
   BORROWED: '已借出',
   RECEIVED: '已接收',
   RETURNED: '已归还',
+  SOON_OVERDUE: '即将逾期',
   OVERDUE: '已逾期'
 };
 
-const SLIDE_BORROW_STATUS_LIST = ['全部', '已借出', '已接收', '已归还', '已逾期'];
+const SLIDE_BORROW_STATUS_LIST = ['全部', '已借出', '已接收', '即将逾期', '已逾期', '已归还'];
 
 const SLIDE_BORROW_SEED = [
   {
@@ -59,6 +60,17 @@ const SLIDE_BORROW_SEED = [
     actualReturnTime: '',
     status: '已借出',
     remark: '会诊用玻片，需仔细观察切缘'
+  },
+  {
+    caseNo: 'P2026061405',
+    borrower: '陈医生',
+    department: '肿瘤科',
+    borrowTime: '2026-06-13T10:00',
+    receiveTime: '2026-06-13T11:15',
+    expectedReturnTime: '2026-06-15T10:00',
+    actualReturnTime: '',
+    status: '已借出',
+    remark: '多学科会诊用，预计明日上午归还'
   },
   {
     caseNo: 'P2026061208',
@@ -416,6 +428,9 @@ function calcBorrowStatus(item) {
   if (!item.actualReturnTime && now > expected) {
     return SLIDE_BORROW_STATUS.OVERDUE;
   }
+  if (!item.actualReturnTime && isSoonOverdue(item)) {
+    return SLIDE_BORROW_STATUS.SOON_OVERDUE;
+  }
   if (item.receiveTime) {
     return SLIDE_BORROW_STATUS.RECEIVED;
   }
@@ -429,11 +444,28 @@ function isOverdue(item) {
   return now > expected;
 }
 
+function isSoonOverdue(item) {
+  if (item.status === SLIDE_BORROW_STATUS.RETURNED) return false;
+  if (isOverdue(item)) return false;
+  if (item.actualReturnTime) return false;
+  const now = new Date().getTime();
+  const expected = new Date(item.expectedReturnTime).getTime();
+  const diffHours = (expected - now) / (1000 * 60 * 60);
+  return diffHours >= 0 && diffHours <= 24;
+}
+
 function overdueDays(item) {
   if (!isOverdue(item)) return 0;
   const now = new Date().getTime();
   const expected = new Date(item.expectedReturnTime).getTime();
   return Math.ceil((now - expected) / (1000 * 60 * 60 * 24));
+}
+
+function soonOverdueHours(item) {
+  if (!isSoonOverdue(item)) return 0;
+  const now = new Date().getTime();
+  const expected = new Date(item.expectedReturnTime).getTime();
+  return Math.ceil((expected - now) / (1000 * 60 * 60));
 }
 
 function borrowStatusClass(status) {
@@ -444,6 +476,8 @@ function borrowStatusClass(status) {
       return 'borrow-status-received';
     case SLIDE_BORROW_STATUS.RETURNED:
       return 'borrow-status-returned';
+    case SLIDE_BORROW_STATUS.SOON_OVERDUE:
+      return 'borrow-status-soon-overdue';
     case SLIDE_BORROW_STATUS.OVERDUE:
       return 'borrow-status-overdue';
     default:
@@ -454,6 +488,28 @@ function borrowStatusClass(status) {
 function getFullBorrowTimeline(item) {
   if (!item) return [];
   const baseTimeline = [...(item.timeline || buildBorrowTimeline(item))];
+  if (isSoonOverdue(item)) {
+    const sdHours = soonOverdueHours(item);
+    const soonOverdueTime = new Date(new Date(item.expectedReturnTime).getTime() - 24 * 60 * 60 * 1000);
+    const soonOverdueEvent = {
+      type: 'slide-soon-overdue',
+      event: `即将逾期（剩${sdHours}小时）`,
+      at: formatDateShort(soonOverdueTime.toISOString()),
+      by: '系统提醒',
+      changedAt: soonOverdueTime.toISOString(),
+      soonOverdueHours: sdHours
+    };
+    const soonOverdueTimeMs = soonOverdueTime.getTime();
+    let insertIndex = baseTimeline.length;
+    for (let i = 0; i < baseTimeline.length; i++) {
+      const t = new Date(baseTimeline[i].changedAt || baseTimeline[i].at).getTime();
+      if (t > soonOverdueTimeMs) {
+        insertIndex = i;
+        break;
+      }
+    }
+    baseTimeline.splice(insertIndex, 0, soonOverdueEvent);
+  }
   if (isOverdue(item)) {
     const odDays = overdueDays(item);
     const overdueEvent = {
@@ -1918,7 +1974,7 @@ function App() {
         return true;
       })
       .sort((a, b) => {
-        const statusOrder = { '已逾期': 0, '已借出': 1, '已接收': 2, '已归还': 3 };
+        const statusOrder = { '已逾期': 0, '即将逾期': 1, '已借出': 2, '已接收': 3, '已归还': 4 };
         const statusA = statusOrder[calcBorrowStatus(a)] ?? 9;
         const statusB = statusOrder[calcBorrowStatus(b)] ?? 9;
         if (statusA !== statusB) return statusA - statusB;
@@ -1932,6 +1988,7 @@ function App() {
     let borrowed = 0;
     let received = 0;
     let returned = 0;
+    let soonOverdue = 0;
     let overdue = 0;
 
     slideBorrows.forEach((item) => {
@@ -1939,10 +1996,11 @@ function App() {
       if (status === SLIDE_BORROW_STATUS.BORROWED) borrowed++;
       if (status === SLIDE_BORROW_STATUS.RECEIVED) received++;
       if (status === SLIDE_BORROW_STATUS.RETURNED) returned++;
+      if (status === SLIDE_BORROW_STATUS.SOON_OVERDUE) soonOverdue++;
       if (status === SLIDE_BORROW_STATUS.OVERDUE) overdue++;
     });
 
-    return { total, borrowed, received, returned, overdue, unreturned: borrowed + received + overdue };
+    return { total, borrowed, received, returned, soonOverdue, overdue, unreturned: borrowed + received + soonOverdue + overdue };
   }, [slideBorrows, tick]);
 
   const departmentList = useMemo(() => {
@@ -3540,6 +3598,10 @@ function App() {
               <span>未归还</span>
               <strong>{borrowStats.unreturned}</strong>
             </article>
+            <article className="metric borrow-metric borrow-metric-soon-overdue">
+              <span>即将逾期</span>
+              <strong>{borrowStats.soonOverdue}</strong>
+            </article>
             <article className="metric borrow-metric borrow-metric-overdue">
               <span>已逾期</span>
               <strong>{borrowStats.overdue}</strong>
@@ -3683,6 +3745,8 @@ function App() {
                   const status = calcBorrowStatus(item);
                   const overdue = isOverdue(item);
                   const odDays = overdueDays(item);
+                  const soonOverdue = isSoonOverdue(item);
+                  const sdHours = soonOverdueHours(item);
                   return (
                     <article
                       key={item.id}
@@ -3702,6 +3766,12 @@ function App() {
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
                           <span className={`status borrow-status ${borrowStatusClass(status)}`}>{status}</span>
+                          {soonOverdue && !overdue && (
+                            <span className="borrow-soon-overdue-badge">
+                              <Clock size={12} />
+                              剩{sdHours}小时到期
+                            </span>
+                          )}
                           {overdue && (
                             <span className="borrow-overdue-badge">
                               <AlertTriangle size={12} />
@@ -3719,7 +3789,7 @@ function App() {
                         </div>
                         <div className="borrow-time-item">
                           <span className="borrow-time-label">预计归还</span>
-                          <span className={`borrow-time-value ${overdue ? 'borrow-overdue-text' : ''}`}>
+                          <span className={`borrow-time-value ${overdue ? 'borrow-overdue-text' : soonOverdue ? 'borrow-soon-overdue-text' : ''}`}>
                             {item.expectedReturnTime ? new Date(item.expectedReturnTime).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
                           </span>
                         </div>

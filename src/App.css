@@ -2043,7 +2043,7 @@ textarea { min-height: 76px; resize: vertical; }
 
 .borrow-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin: 18px 0;
 }
@@ -2068,6 +2068,10 @@ textarea { min-height: 76px; resize: vertical; }
 
 .borrow-metric-unreturned::before {
   background: #f59e0b;
+}
+
+.borrow-metric-soon-overdue::before {
+  background: #f97316;
 }
 
 .borrow-metric-overdue::before {
@@ -2139,6 +2143,11 @@ textarea { min-height: 76px; resize: vertical; }
   background: #f0fdf4;
 }
 
+.borrow-card.borrow-status-soon-overdue {
+  border-left-color: #f97316;
+  background: #fff7ed;
+}
+
 .borrow-card.borrow-status-overdue {
   border-left-color: #ef4444;
   background: #fef2f2;
@@ -2185,9 +2194,26 @@ textarea { min-height: 76px; resize: vertical; }
   color: #166534;
 }
 
+.borrow-status.borrow-status-soon-overdue {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
 .borrow-status.borrow-status-overdue {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.borrow-soon-overdue-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #ffedd5;
+  color: #ea580c;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .borrow-overdue-badge {
@@ -2227,6 +2253,11 @@ textarea { min-height: 76px; resize: vertical; }
   font-size: 13px;
   font-weight: 600;
   color: #374151;
+}
+
+.borrow-soon-overdue-text {
+  color: #ea580c !important;
+  font-weight: 700 !important;
 }
 
 .borrow-overdue-text {
@@ -2324,12 +2355,29 @@ textarea { min-height: 76px; resize: vertical; }
   color: #047857 !important;
 }
 
+.timeline-slide-soon-overdue {
+  border-left-color: #f97316 !important;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%) !important;
+  color: #c2410c !important;
+  font-weight: 600 !important;
+  animation: soon-overdue-pulse 2s infinite;
+}
+
 .timeline-slide-overdue {
   border-left-color: #ef4444 !important;
   background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%) !important;
   color: #991b1b !important;
   font-weight: 600 !important;
   animation: overdue-pulse 2s infinite;
+}
+
+@keyframes soon-overdue-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(249, 115, 22, 0);
+  }
 }
 
 @keyframes overdue-pulse {
@@ -2343,7 +2391,7 @@ textarea { min-height: 76px; resize: vertical; }
 
 @media (max-width: 980px) {
   .borrow-stats {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
   .borrow-workspace {
     grid-template-columns: 1fr;
@@ -2358,7 +2406,7 @@ textarea { min-height: 76px; resize: vertical; }
 
 @media (max-width: 620px) {
   .borrow-stats {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
   .borrow-toolbar {
     flex-direction: column;
