@@ -667,6 +667,96 @@ function tatStatusClass(status) {
   }[status] || 'tat-unknown';
 }
 
+function buildInitialFiltersState(config) {
+  const state = {};
+  const enabledFilters = (config.filters || [])
+    .filter((f) => f.enabled)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  enabledFilters.forEach((filter) => {
+    switch (filter.type) {
+      case 'search':
+        state[filter.id] = '';
+        break;
+      case 'status':
+        state[filter.id] = '全部';
+        break;
+      case 'select':
+        state[filter.id] = '全部';
+        break;
+      default:
+        break;
+    }
+  });
+
+  return state;
+}
+
+function applyFiltersFromConfig(records, config, filterState) {
+  const enabledFilters = (config.filters || [])
+    .filter((f) => f.enabled)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+  return records.filter((item) => {
+    for (const filter of enabledFilters) {
+      const value = filterState[filter.id];
+      if (!value) continue;
+
+      switch (filter.type) {
+        case 'search': {
+          const searchFields = filter.searchFields || [];
+          if (searchFields.length === 0) continue;
+          const q = String(value).toLowerCase();
+          const match = searchFields.some((f) =>
+            String(item?.[f] ?? '').toLowerCase().includes(q)
+          );
+          if (!match) return false;
+          break;
+        }
+        case 'status': {
+          if (value === '全部') continue;
+          if (item.status !== value) return false;
+          break;
+        }
+        case 'select': {
+          if (value === '全部') continue;
+          const field = filter.field;
+          if (!field) continue;
+          if (item[field] !== value) return false;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    return true;
+  });
+}
+
+function buildSortFnFromConfig(config) {
+  const { primaryField, secondaryField, direction = 'asc' } = config.sortConfig || {};
+  const dateField = config.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+  const dirMultiplier = direction === 'asc' ? 1 : -1;
+  const priorityField = config.priorityConfig?.fieldKey || 'priority';
+
+  return (a, b) => {
+    if (primaryField) {
+      const sortableField = config.fields?.find((f) => f.key === primaryField);
+      if (sortableField?.sortWeights && Object.keys(sortableField.sortWeights).length) {
+        const rankA = sortableField.sortWeights[a?.[primaryField]] ?? 99;
+        const rankB = sortableField.sortWeights[b?.[primaryField]] ?? 99;
+        if (rankA !== rankB) return (rankA - rankB) * dirMultiplier;
+      } else if (sortableField?.sortable) {
+        const rank = priorityRank(config, a[primaryField]) - priorityRank(config, b[primaryField]);
+        if (rank !== 0) return rank * dirMultiplier;
+      }
+    }
+    const aDate = a[secondaryField] || a[dateField] || a.createdAt || '';
+    const bDate = b[secondaryField] || b[dateField] || b.createdAt || '';
+    return String(aDate).localeCompare(String(bDate)) * dirMultiplier;
+  };
+}
+
 function App() {
   const [queueConfig, setQueueConfig] = useState(INITIAL_CONFIG);
   const [showConfigManager, setShowConfigManager] = useState(false);
@@ -679,7 +769,7 @@ function App() {
     ...INITIAL_CONFIG.defaultValues,
     status: getPrimaryStatusName(INITIAL_CONFIG)
   });
-  const [filters, setFilters] = useState({ query: '', status: '全部' });
+  const [filters, setFilters] = useState(() => buildInitialFiltersState(INITIAL_CONFIG));
   const [selected, setSelected] = useState(null);
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRaw, setBatchRaw] = useState('');
@@ -773,9 +863,14 @@ function App() {
     };
   }, [queueConfig]);
 
+  useEffect(() => {
+    setFilters(buildInitialFiltersState(queueConfig));
+  }, [queueConfig.filters]);
+
   function handleConfigSave(newConfig) {
     const sanitized = sanitizeConfig(newConfig);
     setQueueConfig(sanitized);
+    setFilters(buildInitialFiltersState(sanitized));
     const migratedRecords = migrateLegacyRecords(records, sanitized);
     if (migratedRecords.length !== records.length || JSON.stringify(migratedRecords) !== JSON.stringify(records)) {
       setRecords(migratedRecords);
@@ -1918,34 +2013,9 @@ function App() {
   }
 
   const filteredRecords = useMemo(() => {
-    const searchFields = buildSearchFields(queueConfig);
-    const sortField = queueConfig.sortConfig?.primaryField;
-    const sortSecondary = queueConfig.sortConfig?.secondaryField;
-    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
-
-    return records
-      .filter((item) => {
-        if (!filters.query) return true;
-        const q = String(filters.query).toLowerCase();
-        return searchFields.some((f) => String(item?.[f] ?? '').toLowerCase().includes(q));
-      })
-      .filter((item) => filters.status === '全部' || item.status === filters.status)
-      .sort((a, b) => {
-        if (sortField) {
-          const sortableField = queueConfig.fields?.find((f) => f.key === sortField);
-          if (sortableField?.sortWeights && Object.keys(sortableField.sortWeights).length) {
-            const rankA = sortableField.sortWeights[a?.[sortField]] ?? 9;
-            const rankB = sortableField.sortWeights[b?.[sortField]] ?? 9;
-            if (rankA !== rankB) return rankA - rankB;
-          } else if (sortableField?.sortable) {
-            const rank = priorityRank(queueConfig, a[sortField]) - priorityRank(queueConfig, b[sortField]);
-            if (rank !== 0) return rank;
-          }
-        }
-        const aDate = a[sortSecondary] || a[dateField] || a.createdAt || '';
-        const bDate = b[sortSecondary] || b[dateField] || b.createdAt || '';
-        return String(aDate).localeCompare(String(bDate));
-      });
+    const sortFn = buildSortFnFromConfig(queueConfig);
+    const filtered = applyFiltersFromConfig(records, queueConfig, filters);
+    return filtered.sort(sortFn);
   }, [records, filters, queueConfig]);
 
   const metrics = useMemo(() => {
@@ -2479,14 +2549,67 @@ function App() {
 
         <section className="panel list-panel">
           <div className="toolbar">
-            <div className="search">
-              <Search size={16} />
-              <input value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} placeholder={queueConfig.filters?.[0]?.label || '搜索病例号/送检医生...'} />
-            </div>
-            <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-              <option>全部</option>
-              {getStatusNames(queueConfig).map((status) => <option key={status}>{status}</option>)}
-            </select>
+            {(queueConfig.filters || [])
+              .filter((f) => f.enabled)
+              .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+              .map((filter) => {
+                const value = filters[filter.id] ?? '';
+                const onChange = (newValue) => {
+                  setFilters((prev) => ({ ...prev, [filter.id]: newValue }));
+                };
+
+                if (filter.type === 'search') {
+                  const searchFields = filter.searchFields || [];
+                  const placeholders = searchFields
+                    .map((fk) => queueConfig.fields?.find((f) => f.key === fk)?.label || fk)
+                    .slice(0, 2)
+                    .join('/');
+                  return (
+                    <div className="search" key={filter.id}>
+                      <Search size={16} />
+                      <input
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder={filter.label || `搜索${placeholders}...`}
+                      />
+                    </div>
+                  );
+                }
+
+                if (filter.type === 'status') {
+                  return (
+                    <select
+                      key={filter.id}
+                      value={value}
+                      onChange={(e) => onChange(e.target.value)}
+                    >
+                      <option value="全部">全部{filter.label ? ` ${filter.label}` : ''}</option>
+                      {getStatusNames(queueConfig).map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                  );
+                }
+
+                if (filter.type === 'select') {
+                  const field = queueConfig.fields?.find((f) => f.key === filter.field);
+                  const options = field?.options || [];
+                  return (
+                    <select
+                      key={filter.id}
+                      value={value}
+                      onChange={(e) => onChange(e.target.value)}
+                    >
+                      <option value="全部">全部{filter.label ? ` ${filter.label}` : ''}</option>
+                      {options.map((opt) => (
+                        <option key={opt} value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  );
+                }
+
+                return null;
+              })}
           </div>
 
           <div className="records">
@@ -4665,8 +4788,8 @@ function App() {
         isOpen={showConfigManager}
         onClose={() => setShowConfigManager(false)}
         onSave={handleConfigSave}
-        currentConfig={queueConfig}
-        records={records}
+        initialConfig={queueConfig}
+        sampleRecords={records}
       />
     </main>
   );
