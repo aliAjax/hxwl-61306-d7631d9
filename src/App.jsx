@@ -345,6 +345,7 @@ function withBorrowIds(items) {
 }
 
 function buildBorrowTimeline(item) {
+  if (!item) return [];
   const timeline = [];
   if (item.borrowTime) {
     timeline.push({
@@ -428,6 +429,7 @@ function borrowStatusClass(status) {
 }
 
 function getFullBorrowTimeline(item) {
+  if (!item) return [];
   const baseTimeline = [...(item.timeline || buildBorrowTimeline(item))];
   if (isOverdue(item)) {
     const odDays = overdueDays(item);
@@ -511,6 +513,7 @@ function buildWorkbenchZones(config) {
 }
 
 function waitDuration(config, item) {
+  if (!item) return '0分';
   const now = Date.now();
   const timeline = item.timeline || [];
   const lastEntry = timeline[timeline.length - 1];
@@ -550,6 +553,7 @@ function getTatThresholdsFor(config, priority) {
 }
 
 function getStartTime(config, item) {
+  if (!item) return null;
   const timeline = item.timeline || [];
   const firstEntry = timeline[0];
   const dateKey = config.sortConfig?.secondaryField || config.fields?.find((f) => f.dateKey)?.key || 'sentAt';
@@ -564,6 +568,7 @@ function getStartTime(config, item) {
 }
 
 function getEndTime(config, item) {
+  if (!item) return null;
   const terminalStatuses = (config.statuses || []).filter((s) => s.terminal).map((s) => s.name);
   const completedStatuses = terminalStatuses.length > 0 ? terminalStatuses : ['已完成'];
   if (!completedStatuses.includes(item.status)) return null;
@@ -578,6 +583,16 @@ function getEndTime(config, item) {
 }
 
 function calcTatInfo(config, item) {
+  if (!item) {
+    return {
+      status: TAT_STATUS.UNKNOWN,
+      waitedMinutes: 0,
+      remainingMinutes: null,
+      threshold: null,
+      hasStartTime: false,
+      isCompleted: false,
+    };
+  }
   const startMs = getStartTime(config, item);
   const now = Date.now();
 
@@ -588,6 +603,7 @@ function calcTatInfo(config, item) {
       remainingMinutes: null,
       threshold: null,
       hasStartTime: false,
+      isCompleted: false,
     };
   }
 
@@ -1900,27 +1916,34 @@ function App() {
   const getMergedTimeline = useMemo(() => {
     void tick;
     return (record) => {
-      const caseBorrows = slideBorrows.filter((b) => b.caseNo === record.caseNo);
+      if (!record) return [];
+      const caseBorrows = Array.isArray(slideBorrows) ? slideBorrows.filter((b) => b && b.caseNo === record.caseNo) : [];
       const merged = [];
 
       (record.timeline || []).forEach((step) => {
-        const inferredType = step.type || (step.status === '复核意见' ? 'review-status' : (step.status === '派单' ? undefined : undefined));
-        merged.push({
-          ...step,
-          type: inferredType,
-          sortTime: new Date(step.changedAt || step.at).getTime()
-        });
+        if (step) {
+          merged.push({
+            ...step,
+            type: step.type !== undefined ? step.type : 'review-status',
+            sortTime: new Date(step.changedAt || step.at).getTime()
+          });
+        }
       });
 
       caseBorrows.forEach((borrow) => {
-        getFullBorrowTimeline(borrow).forEach((event) => {
-          merged.push({
-            ...event,
-            borrowId: borrow.id,
-            borrower: borrow.borrower,
-            sortTime: new Date(event.changedAt || event.at).getTime()
+        if (borrow) {
+          const borrowEvents = getFullBorrowTimeline(borrow) || [];
+          borrowEvents.forEach((event) => {
+            if (event) {
+              merged.push({
+                ...event,
+                borrowId: borrow.id,
+                borrower: borrow.borrower,
+                sortTime: new Date(event.changedAt || event.at).getTime()
+              });
+            }
           });
-        });
+        }
       });
 
       return merged.sort((a, b) => a.sortTime - b.sortTime);
@@ -1930,6 +1953,7 @@ function App() {
   const getMergedTimelineWithNotify = useMemo(() => {
     void tick;
     return (record) => {
+      if (!record) return [];
       const baseTimeline = getMergedTimeline(record);
       const caseNotifies = getCaseNotifies(record.caseNo, record.id);
       const extraEvents = [];
@@ -2794,7 +2818,7 @@ function App() {
               </div>
 
               {(() => {
-                const tat = calcTatInfo(selected);
+                const tat = calcTatInfo(queueConfig, selected);
                 return (
                   <div className={`detail-tat-section tat-detail-${tat.status}`}>
                     <div className="detail-tat-header">
