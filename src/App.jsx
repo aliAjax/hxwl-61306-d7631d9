@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio } from 'lucide-react';
-import { TabSync, resolveConflict } from './tabSync';
+import { TabSync } from './tabSync';
 import './App.css';
 
 const appConfig = {

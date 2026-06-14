@@ -1,20 +1,10 @@
 const TAB_SYNC_PREFIX = '__tab_sync__';
-const TAB_ID_KEY = TAB_SYNC_PREFIX + 'tab_id';
 const TAB_HEARTBEAT_KEY = TAB_SYNC_PREFIX + 'heartbeat';
 const HEARTBEAT_INTERVAL = 5000;
 const TAB_TIMEOUT = 15000;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-}
-
-function getOrCreateTabId() {
-  let tabId = sessionStorage.getItem(TAB_ID_KEY);
-  if (!tabId) {
-    tabId = uid();
-    sessionStorage.setItem(TAB_ID_KEY, tabId);
-  }
-  return tabId;
 }
 
 export function computeRecordMap(records) {
@@ -341,12 +331,13 @@ export function resolveConflict(strategy, localRecords, externalRecords, baseRec
 export class TabSync {
   constructor(storageKey, options = {}) {
     this.storageKey = storageKey;
-    this.tabId = getOrCreateTabId();
+    this.tabId = uid();
     this.onExternalUpdate = options.onExternalUpdate || (() => {});
     this.onConflict = options.onConflict || (() => {});
     this.onTabListChange = options.onTabListChange || (() => {});
     this.baseSnapshot = [];
     this.currentRecords = [];
+    this.hasLocalMutations = false;
     this._storageHandler = null;
     this._heartbeatTimer = null;
     this._listenersBound = false;
@@ -366,6 +357,7 @@ export class TabSync {
 
   persist(records) {
     this.currentRecords = JSON.parse(JSON.stringify(records));
+    this.hasLocalMutations = true;
     const payload = {
       tabId: this.tabId,
       records: records,
@@ -378,6 +370,7 @@ export class TabSync {
   _updateBaseSnapshot(records) {
     this.baseSnapshot = JSON.parse(JSON.stringify(records));
     this.currentRecords = JSON.parse(JSON.stringify(records));
+    this.hasLocalMutations = false;
   }
 
   _bindListeners() {
@@ -393,6 +386,9 @@ export class TabSync {
           const meta = JSON.parse(event.newValue);
           if (meta.tabId === this.tabId) return;
           this._notifyTabListChange();
+          if (Array.isArray(meta.records)) {
+            this._handleExternalChange(meta.records);
+          }
         } catch {
           return;
         }
@@ -422,13 +418,14 @@ export class TabSync {
     conflictInfo.localRecords = currentRecords;
     conflictInfo.baseRecords = baseRecords;
 
-    if (!conflictInfo.hasLocalChanges && conflictInfo.hasExternalChanges) {
+    const externalDiffersFromCurrent = JSON.stringify(currentRecords) !== JSON.stringify(externalRecords);
+    if (!this.hasLocalMutations && !conflictInfo.hasLocalChanges && conflictInfo.hasExternalChanges) {
       this._updateBaseSnapshot(externalRecords);
       this.onExternalUpdate(externalRecords, conflictInfo);
       return;
     }
 
-    if (conflictInfo.hasLocalChanges && conflictInfo.hasExternalChanges) {
+    if ((conflictInfo.hasLocalChanges || this.hasLocalMutations) && externalDiffersFromCurrent) {
       this._lastExternalRecords = externalRecords;
       this.onConflict(conflictInfo);
     }
@@ -501,6 +498,7 @@ export class TabSync {
       timestamp: Date.now()
     };
     localStorage.setItem(this.storageKey + '_meta', JSON.stringify(payload));
+    this._lastExternalRecords = null;
     return resolved;
   }
 
