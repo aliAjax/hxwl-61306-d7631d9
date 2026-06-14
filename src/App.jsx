@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown } from 'lucide-react';
 import { TabSync } from './tabSync';
 import { ConfigManager } from './components/ConfigManager';
 import {
@@ -878,8 +878,10 @@ function App() {
   const [noteAdding, setNoteAdding] = useState(false);
   const [noteForm, setNoteForm] = useState({ noteText: '', noteBy: '' });
   const [statusNoteAdding, setStatusNoteAdding] = useState(null);
-  const [tatFilters, setTatFilters] = useState({ doctor: '全部', status: '全部', tatStatus: '全部' });
+  const [tatFilters, setTatFilters] = useState({ doctor: '全部', status: '全部', tatStatus: '全部', priority: '全部' });
+  const [tatGroupCaseFilters, setTatGroupCaseFilters] = useState({});
   const [showTatBoard, setShowTatBoard] = useState(false);
+  const [expandedDoctors, setExpandedDoctors] = useState(new Set());
   const [activeView, setActiveView] = useState('workbench');
   const [dispatchFilters, setDispatchFilters] = useState({ query: '', priority: '全部', sampleType: '全部' });
   const [selectedCases, setSelectedCases] = useState(new Set());
@@ -2415,11 +2417,23 @@ function App() {
     return records.filter((item) => selectedCases.has(item.id));
   }, [records, selectedCases]);
 
+  function toggleDoctorExpand(doctor) {
+    const next = new Set(expandedDoctors);
+    if (next.has(doctor)) {
+      next.delete(doctor);
+    } else {
+      next.add(doctor);
+    }
+    setExpandedDoctors(next);
+  }
+
   const tatFilteredRecords = useMemo(() => {
     void tick;
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
     return records
       .filter((item) => tatFilters.doctor === '全部' || item.doctor === tatFilters.doctor)
       .filter((item) => tatFilters.status === '全部' || item.status === tatFilters.status)
+      .filter((item) => tatFilters.priority === '全部' || item[priorityField] === tatFilters.priority)
       .filter((item) => {
         if (tatFilters.tatStatus === '全部') return true;
         const tat = calcTatInfo(queueConfig, item);
@@ -2435,11 +2449,78 @@ function App() {
         const rankA = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatA.status] ?? 9;
         const rankB = { [TAT_STATUS.OVERDUE]: 0, [TAT_STATUS.WARNING]: 1, [TAT_STATUS.NORMAL]: 2, [TAT_STATUS.UNKNOWN]: 3 }[tatB.status] ?? 9;
         if (rankA !== rankB) return rankA - rankB;
-        const priorityDiff = priorityRank(queueConfig, a.priority) - priorityRank(queueConfig, b.priority);
+        const priorityDiff = priorityRank(queueConfig, a[priorityField]) - priorityRank(queueConfig, b[priorityField]);
         if (priorityDiff !== 0) return priorityDiff;
         return (tatA.waitedMinutes || 0) - (tatB.waitedMinutes || 0);
       });
-  }, [records, tatFilters, tick]);
+  }, [records, tatFilters, tick, queueConfig]);
+
+  const tatDoctorGroups = useMemo(() => {
+    void tick;
+    const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+    const groups = {};
+
+    tatFilteredRecords.forEach((item) => {
+      const doctor = item[doctorField] || '未分配';
+      const tat = calcTatInfo(queueConfig, item);
+      const priority = item[priorityField] || '未知';
+
+      if (!groups[doctor]) {
+        groups[doctor] = {
+          doctor,
+          total: 0,
+          normal: 0,
+          warning: 0,
+          overdue: 0,
+          unknown: 0,
+          priorityBreakdown: {},
+          cases: []
+        };
+      }
+
+      groups[doctor].total++;
+      groups[doctor].cases.push({ ...item, _tat: tat });
+
+      switch (tat.status) {
+        case TAT_STATUS.OVERDUE:
+          groups[doctor].overdue++;
+          break;
+        case TAT_STATUS.WARNING:
+          groups[doctor].warning++;
+          break;
+        case TAT_STATUS.NORMAL:
+          groups[doctor].normal++;
+          break;
+        default:
+          groups[doctor].unknown++;
+      }
+
+      if (!groups[doctor].priorityBreakdown[priority]) {
+        groups[doctor].priorityBreakdown[priority] = { total: 0, normal: 0, warning: 0, overdue: 0, unknown: 0 };
+      }
+      groups[doctor].priorityBreakdown[priority].total++;
+      switch (tat.status) {
+        case TAT_STATUS.OVERDUE:
+          groups[doctor].priorityBreakdown[priority].overdue++;
+          break;
+        case TAT_STATUS.WARNING:
+          groups[doctor].priorityBreakdown[priority].warning++;
+          break;
+        case TAT_STATUS.NORMAL:
+          groups[doctor].priorityBreakdown[priority].normal++;
+          break;
+        default:
+          groups[doctor].priorityBreakdown[priority].unknown++;
+      }
+    });
+
+    return Object.values(groups).sort((a, b) => {
+      if (b.overdue !== a.overdue) return b.overdue - a.overdue;
+      if (b.warning !== a.warning) return b.warning - a.warning;
+      return b.total - a.total;
+    });
+  }, [tatFilteredRecords, tick, queueConfig]);
 
   const tatStats = useMemo(() => {
     void tick;
@@ -2635,14 +2716,18 @@ function App() {
       {showTatBoard && (
         <section className="tat-board">
           <div className="tat-header">
-            <div className="eyebrow"><Clock size={18} />TAT超时预警看板</div>
+            <div className="eyebrow"><Clock size={18} />TAT超时预警看板 · 按医生+优先级双维度概览</div>
             <div className="tat-filters">
               <select value={tatFilters.tatStatus} onChange={(e) => setTatFilters({ ...tatFilters, tatStatus: e.target.value })}>
-                <option value="全部">全部状态</option>
+                <option value="全部">全部TAT状态</option>
                 <option value="已超时">已超时</option>
                 <option value="即将超时">即将超时</option>
                 <option value="正常">正常</option>
                 <option value="待计时">待计时</option>
+              </select>
+              <select value={tatFilters.priority} onChange={(e) => setTatFilters({ ...tatFilters, priority: e.target.value })}>
+                <option value="全部">全部优先级</option>
+                {(queueConfig.priorityConfig?.order || []).map((p) => <option key={p}>{p}</option>)}
               </select>
               <select value={tatFilters.doctor} onChange={(e) => setTatFilters({ ...tatFilters, doctor: e.target.value })}>
                 <option value="全部">全部医生</option>
@@ -2678,64 +2763,215 @@ function App() {
             </div>
           </div>
 
+          <div className="tat-risk-matrix">
+            <div className="risk-matrix-title">
+              <AlertTriangle size={16} />
+              <span>优先级风险矩阵（超时+预警）</span>
+            </div>
+            <div className="risk-matrix-grid">
+              {(queueConfig.priorityConfig?.order || []).map((priority) => {
+                const pbTotal = tatDoctorGroups.reduce((sum, g) => sum + (g.priorityBreakdown[priority]?.total || 0), 0);
+                const pbOverdue = tatDoctorGroups.reduce((sum, g) => sum + (g.priorityBreakdown[priority]?.overdue || 0), 0);
+                const pbWarning = tatDoctorGroups.reduce((sum, g) => sum + (g.priorityBreakdown[priority]?.warning || 0), 0);
+                const pbNormal = tatDoctorGroups.reduce((sum, g) => sum + (g.priorityBreakdown[priority]?.normal || 0), 0);
+                const riskLevel = pbOverdue > 0 ? 'high' : pbWarning > 0 ? 'medium' : 'low';
+                return (
+                  <div key={priority} className={`risk-matrix-cell risk-${riskLevel}`}>
+                    <div className="risk-matrix-priority">
+                      <span className={`priority-tag priority-${priority}`}>{priority}</span>
+                    </div>
+                    <div className="risk-matrix-stats">
+                      <span className="risk-stat risk-overdue" title="超时">{pbOverdue}</span>
+                      <span className="risk-sep">/</span>
+                      <span className="risk-stat risk-warning" title="预警">{pbWarning}</span>
+                      <span className="risk-sep">/</span>
+                      <span className="risk-stat risk-normal" title="正常">{pbNormal}</span>
+                    </div>
+                    <div className="risk-matrix-total">共 {pbTotal} 条</div>
+                    {(pbOverdue > 0 || pbWarning > 0) && (
+                      <div className="risk-matrix-bar">
+                        <div
+                          className="risk-bar-overdue"
+                          style={{ width: pbTotal > 0 ? `${(pbOverdue / pbTotal) * 100}%` : '0%' }}
+                        />
+                        <div
+                          className="risk-bar-warning"
+                          style={{ width: pbTotal > 0 ? `${(pbWarning / pbTotal) * 100}%` : '0%' }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="tat-thresholds">
-            <span className="tat-thresholds-label">TAT阈值：</span>
-            {Object.entries(TAT_THRESHOLDS).map(([priority, th]) => (
+            <span className="tat-thresholds-label">TAT阈值配置：</span>
+            {Object.entries(queueConfig.priorityConfig?.tatThresholds || {}).map(([priority, th]) => (
               <span key={priority} className="tat-threshold-item">
                 <strong>{priority}</strong>：{formatDuration(th.warning)}预警 / {formatDuration(th.timeout)}超时
               </span>
             ))}
           </div>
 
-          <div className="tat-list">
-            {tatFilteredRecords.length === 0 && (
+          <div className="tat-doctor-groups">
+            {tatDoctorGroups.length === 0 && (
               <div className="tat-empty">暂无符合条件的病例</div>
             )}
-            {tatFilteredRecords.map((item) => {
-              const tat = calcTatInfo(queueConfig, item);
+            {tatDoctorGroups.map((group) => {
+              const isExpanded = expandedDoctors.has(group.doctor);
+              const hasRisk = group.overdue > 0 || group.warning > 0;
+              const caseFilter = tatGroupCaseFilters[group.doctor] || '全部';
+              const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+              const filteredCases = group.cases.filter((item) => {
+                if (caseFilter === '全部') return true;
+                if (caseFilter === '超时') return item._tat.status === TAT_STATUS.OVERDUE;
+                if (caseFilter === '预警') return item._tat.status === TAT_STATUS.WARNING;
+                if (caseFilter === '正常') return item._tat.status === TAT_STATUS.NORMAL;
+                if (caseFilter === '待计时') return item._tat.status === TAT_STATUS.UNKNOWN;
+                return true;
+              });
               return (
-                <article
-                  className={`tat-record tat-${tat.status}`}
-                  key={item.id}
-                  onClick={() => setSelected(item)}
+                <div
+                  key={group.doctor}
+                  className={`tat-doctor-group ${hasRisk ? 'has-risk' : ''} ${group.overdue > 0 ? 'has-overdue' : ''}`}
                 >
-                  <div className="tat-record-main">
-                    <div className="tat-record-head">
-                      <h3>{item.caseNo}</h3>
-                      <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
-                        {tatStatusLabel(tat.status)}
-                      </span>
+                  <div
+                    className="tat-doctor-header"
+                    onClick={() => toggleDoctorExpand(group.doctor)}
+                  >
+                    <div className="tat-doctor-info">
+                      <div className={`tat-doctor-avatar ${group.overdue > 0 ? 'avatar-danger' : group.warning > 0 ? 'avatar-warning' : ''}`}>
+                        {group.doctor.slice(0, 1)}
+                      </div>
+                      <div className="tat-doctor-name">
+                        <h3>{group.doctor}</h3>
+                        <span>共 {group.total} 条病例</span>
+                      </div>
                     </div>
-                    <div className="tat-record-meta">
-                      <span>{item.sampleType}</span>
-                      <span className={`priority-tag priority-${item.priority}`}>{item.priority}</span>
-                      <span>{item.doctor}</span>
-                      <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
+                    <div className="tat-doctor-stats">
+                      <div className={`tat-doctor-stat overdue ${group.overdue > 0 ? 'active' : ''}`}>
+                        <span className="stat-label">超时</span>
+                        <strong>{group.overdue}</strong>
+                      </div>
+                      <div className={`tat-doctor-stat warning ${group.warning > 0 ? 'active' : ''}`}>
+                        <span className="stat-label">预警</span>
+                        <strong>{group.warning}</strong>
+                      </div>
+                      <div className={`tat-doctor-stat normal ${group.normal > 0 ? 'active' : ''}`}>
+                        <span className="stat-label">正常</span>
+                        <strong>{group.normal}</strong>
+                      </div>
+                      {group.unknown > 0 && (
+                        <div className="tat-doctor-stat unknown">
+                          <span className="stat-label">待计时</span>
+                          <strong>{group.unknown}</strong>
+                        </div>
+                      )}
+                    </div>
+                    <div className={`tat-expand-icon ${isExpanded ? 'expanded' : ''}`}>
+                      <ChevronDown size={18} />
                     </div>
                   </div>
-                  <div className="tat-record-times">
-                    <div className="tat-time-item">
-                      <span className="tat-time-label">已等待</span>
-                      <span className="tat-time-value">{tat.hasStartTime ? formatDuration(tat.waitedMinutes) : '-'}</span>
+
+                  {Object.keys(group.priorityBreakdown).length > 0 && (
+                    <div className="tat-priority-breakdown">
+                      <span className="priority-breakdown-label">按优先级：</span>
+                      {Object.entries(group.priorityBreakdown).map(([priority, pb]) => (
+                        <span key={priority} className="priority-breakdown-item">
+                          <span className={`priority-tag priority-${priority}`}>{priority}</span>
+                          {pb.overdue > 0 && <span className="pb-count overdue">超时{pb.overdue}</span>}
+                          {pb.warning > 0 && <span className="pb-count warning">预警{pb.warning}</span>}
+                          {pb.normal > 0 && <span className="pb-count normal">正常{pb.normal}</span>}
+                          {pb.unknown > 0 && <span className="pb-count unknown">待计{pb.unknown}</span>}
+                        </span>
+                      ))}
                     </div>
-                    <div className="tat-time-item">
-                      <span className="tat-time-label">剩余时间</span>
-                      <span className={`tat-time-value ${tat.status === TAT_STATUS.OVERDUE ? 'tat-overdue-text' : tat.status === TAT_STATUS.WARNING ? 'tat-warning-text' : ''}`}>
-                        {tat.isCompleted ? '已完成' : tat.hasStartTime ? formatDuration(tat.remainingMinutes) : '-'}
-                      </span>
-                    </div>
-                    <div className="tat-time-item">
-                      <span className="tat-time-label">TAT阈值</span>
-                      <span className="tat-time-value">{tat.threshold ? formatDuration(tat.threshold) : '-'}</span>
-                    </div>
-                  </div>
-                  <div className="tat-progress">
-                    <div
-                      className={`tat-progress-bar ${tatStatusClass(tat.status)}`}
-                      style={{ width: `${tat.hasStartTime && tat.threshold ? Math.min(100, (tat.waitedMinutes / tat.threshold) * 100) : 0}%` }}
-                    />
-                  </div>
-                </article>
+                  )}
+
+                  {isExpanded && (
+                    <>
+                      <div className="tat-group-case-toolbar" onClick={(e) => e.stopPropagation()}>
+                        <span className="case-toolbar-label">筛选病例：</span>
+                        <div className="case-toolbar-tabs">
+                          {['全部', '超时', '预警', '正常', '待计时'].map((tab) => (
+                            <button
+                              key={tab}
+                              type="button"
+                              className={`case-tab ${caseFilter === tab ? 'active' : ''} case-tab-${tab}`}
+                              onClick={() => setTatGroupCaseFilters({
+                                ...tatGroupCaseFilters,
+                                [group.doctor]: tab
+                              })}
+                            >
+                              {tab}
+                              {tab === '全部' && <em>({group.cases.length})</em>}
+                              {tab === '超时' && group.overdue > 0 && <em>({group.overdue})</em>}
+                              {tab === '预警' && group.warning > 0 && <em>({group.warning})</em>}
+                              {tab === '正常' && group.normal > 0 && <em>({group.normal})</em>}
+                              {tab === '待计时' && group.unknown > 0 && <em>({group.unknown})</em>}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="tat-doctor-cases">
+                        {filteredCases.length === 0 && (
+                          <div className="tat-cases-empty">暂无「{caseFilter}」状态的病例</div>
+                        )}
+                        {filteredCases.map((item) => {
+                          const tat = item._tat;
+                          const titleField = queueConfig.cardDisplay?.titleField || 'caseNo';
+                          return (
+                            <article
+                              className={`tat-record tat-${tat.status}`}
+                              key={item.id}
+                              onClick={() => setSelected(item)}
+                            >
+                              <div className="tat-record-main">
+                                <div className="tat-record-head">
+                                  <h3>{item[titleField] || item.id}</h3>
+                                  <span className={`tat-badge ${tatStatusClass(tat.status)}`}>
+                                    {tatStatusLabel(tat.status)}
+                                  </span>
+                                </div>
+                                <div className="tat-record-meta">
+                                  {queueConfig.cardDisplay?.metaFields?.map((mf) => (
+                                    mf !== 'doctor' && item[mf] ? <span key={mf}>{item[mf]}</span> : null
+                                  ))}
+                                  <span className={`priority-tag priority-${item[priorityField] || '常规'}`}>{item[priorityField] || '常规'}</span>
+                                  <span className={'status ' + statusClass(queueConfig, item.status)}>{item.status}</span>
+                                </div>
+                              </div>
+                              <div className="tat-record-times">
+                                <div className="tat-time-item">
+                                  <span className="tat-time-label">已等待</span>
+                                  <span className="tat-time-value">{tat.hasStartTime ? formatDuration(tat.waitedMinutes) : '-'}</span>
+                                </div>
+                                <div className="tat-time-item">
+                                  <span className="tat-time-label">剩余时间</span>
+                                  <span className={`tat-time-value ${tat.status === TAT_STATUS.OVERDUE ? 'tat-overdue-text' : tat.status === TAT_STATUS.WARNING ? 'tat-warning-text' : ''}`}>
+                                    {tat.isCompleted ? '已完成' : tat.hasStartTime ? formatDuration(tat.remainingMinutes) : '-'}
+                                  </span>
+                                </div>
+                                <div className="tat-time-item">
+                                  <span className="tat-time-label">TAT阈值</span>
+                                  <span className="tat-time-value">{tat.threshold ? formatDuration(tat.threshold) : '-'}</span>
+                                </div>
+                              </div>
+                              <div className="tat-progress">
+                                <div
+                                  className={`tat-progress-bar ${tatStatusClass(tat.status)}`}
+                                  style={{ width: `${tat.hasStartTime && tat.threshold ? Math.min(100, (tat.waitedMinutes / tat.threshold) * 100) : 0}%` }}
+                                />
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
               );
             })}
           </div>
