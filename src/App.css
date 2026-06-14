@@ -1987,6 +1987,74 @@ textarea { min-height: 76px; resize: vertical; }
   line-height: 1.6;
 }
 
+.doctor-workload-alert {
+  padding: 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+}
+
+.doctor-workload-alert.overloaded {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.workload-alert-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #166534;
+  font-size: 14px;
+}
+
+.doctor-workload-alert.overloaded .workload-alert-header {
+  color: #991b1b;
+}
+
+.workload-alert-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.workload-alert-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+}
+
+.workload-alert-stat .stat-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.workload-alert-stat .stat-value {
+  font-size: 18px;
+  color: #111827;
+  font-weight: 700;
+}
+
+.workload-alert-stat .stat-value.danger {
+  color: #dc2626;
+}
+
+.workload-overload-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #fee2e2;
+  border-radius: 6px;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .timeline-dispatch {
   border-left-color: #7c3aed !important;
   background: #faf5ff !important;

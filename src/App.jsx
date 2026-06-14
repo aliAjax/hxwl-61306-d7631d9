@@ -2299,6 +2299,9 @@ function App() {
     void tick;
     const statusNames = getStatusNames(queueConfig);
     const doctorField = queueConfig.fields?.find((f) => f.key === 'doctor')?.key || 'doctor';
+    const priorityField = queueConfig.priorityConfig?.fieldKey || 'priority';
+    const dateField = queueConfig.fields?.find((f) => f.dateKey)?.key || 'sentAt';
+    const terminalStatuses = queueConfig.statuses.filter((s) => s.terminal).map((s) => s.name);
     const workload = {};
     records.forEach((item) => {
       if (!item[doctorField]) return;
@@ -2310,6 +2313,9 @@ function App() {
           reviewing: 0,
           completed: 0,
           total: 0,
+          incomplete: 0,
+          urgentCritical: 0,
+          earliestSentAt: null,
           cases: []
         };
       }
@@ -2320,6 +2326,26 @@ function App() {
       else if (status === statusNames[1]) workload[item[doctorField]].reading++;
       else if (status === statusNames[2]) workload[item[doctorField]].reviewing++;
       else if (status === statusNames[3]) workload[item[doctorField]].completed++;
+
+      const isIncomplete = !terminalStatuses.includes(status);
+      if (isIncomplete) {
+        workload[item[doctorField]].incomplete++;
+
+        const priority = item[priorityField];
+        if (priority === '危急' || priority === '加急') {
+          workload[item[doctorField]].urgentCritical++;
+        }
+
+        const sentTimeStr = item[dateField] || item.sentAt || item.createdAt;
+        if (sentTimeStr) {
+          const sentTime = new Date(sentTimeStr).getTime();
+          if (Number.isFinite(sentTime)) {
+            if (!workload[item[doctorField]].earliestSentAt || sentTime < new Date(workload[item[doctorField]].earliestSentAt).getTime()) {
+              workload[item[doctorField]].earliestSentAt = sentTimeStr;
+            }
+          }
+        }
+      }
     });
     return Object.values(workload).sort((a, b) => b.total - a.total);
   }, [records, tick, queueConfig]);
@@ -4770,7 +4796,13 @@ function App() {
         </div>
       )}
 
-      {showDispatchConfirm && (
+      {showDispatchConfirm && (() => {
+        const targetWl = doctorWorkload.find((w) => w.doctor === selectedDoctor);
+        const incomplete = targetWl?.incomplete || 0;
+        const urgentCritical = targetWl?.urgentCritical || 0;
+        const earliestSentAt = targetWl?.earliestSentAt;
+        const isOverloaded = incomplete >= 10 || urgentCritical >= 3;
+        return (
         <div className="batch-overlay" onClick={cancelDispatch}>
           <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
             <div className="batch-header">
@@ -4783,6 +4815,34 @@ function App() {
             <div className="batch-body">
               <div className="confirm-info">
                 <p>即将把 <strong>{selectedCases.size}</strong> 条病例派给 <strong>{selectedDoctor}</strong></p>
+
+                <div className={`doctor-workload-alert ${isOverloaded ? 'overloaded' : ''}`}>
+                  <div className="workload-alert-header">
+                    {isOverloaded ? <AlertTriangle size={18} /> : <Info size={18} />}
+                    <strong>医生当前工作量</strong>
+                  </div>
+                  <div className="workload-alert-stats">
+                    <div className="workload-alert-stat">
+                      <span className="stat-label">未完成病例</span>
+                      <strong className={`stat-value ${incomplete >= 10 ? 'danger' : ''}`}>{incomplete} 条</strong>
+                    </div>
+                    <div className="workload-alert-stat">
+                      <span className="stat-label">危急/加急</span>
+                      <strong className={`stat-value ${urgentCritical >= 3 ? 'danger' : ''}`}>{urgentCritical} 条</strong>
+                    </div>
+                    <div className="workload-alert-stat">
+                      <span className="stat-label">最早送检时间</span>
+                      <strong className="stat-value">{earliestSentAt ? formatDateTime(earliestSentAt) : '-'}</strong>
+                    </div>
+                  </div>
+                  {isOverloaded && (
+                    <div className="workload-overload-warning">
+                      <AlertTriangle size={14} />
+                      <span>该医生当前工作量较大，建议确认后再派单</span>
+                    </div>
+                  )}
+                </div>
+
                 <div className="confirm-preview">
                   {selectedCasesData.slice(0, 5).map((item) => (
                     <div key={item.id} className="confirm-item">
@@ -4815,7 +4875,8 @@ function App() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {showPhrasePicker && (
         <div className="batch-overlay" onClick={closePhrasePicker}>
