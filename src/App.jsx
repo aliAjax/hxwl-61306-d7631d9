@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio } from 'lucide-react';
+import { TabSync, resolveConflict } from './tabSync';
 import './App.css';
 
 const appConfig = {
@@ -760,6 +761,10 @@ function tatStatusClass(status) {
 
 function App() {
   const [records, setRecords] = useState(loadRecords);
+  const tabSyncRef = useRef(null);
+  const [activeTabCount, setActiveTabCount] = useState(1);
+  const [conflictInfo, setConflictInfo] = useState(null);
+  const [showConflictModal, setShowConflictModal] = useState(false);
   const [form, setForm] = useState(appConfig.defaultValues);
   const [filters, setFilters] = useState({ query: '', status: '全部' });
   const [selected, setSelected] = useState(null);
@@ -824,6 +829,33 @@ function App() {
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const initialRecords = loadRecords();
+    const tabSync = new TabSync(appConfig.storage, {
+      onExternalUpdate: (externalRecords) => {
+        setRecords(externalRecords);
+        if (selected) {
+          const updatedSelected = externalRecords.find((r) => r.id === selected.id);
+          setSelected(updatedSelected || null);
+        }
+      },
+      onConflict: (conflictData) => {
+        tabSync.setLastExternalRecords(conflictData.externalRecords);
+        setConflictInfo(conflictData);
+        setShowConflictModal(true);
+      },
+      onTabListChange: (count) => {
+        setActiveTabCount(count);
+      }
+    });
+    tabSync.init(initialRecords);
+    tabSyncRef.current = tabSync;
+
+    return () => {
+      tabSync.destroy();
+    };
   }, []);
 
   useEffect(() => {
@@ -1159,7 +1191,9 @@ function App() {
 
   function persist(next) {
     setRecords(next);
-    localStorage.setItem(appConfig.storage, JSON.stringify(next));
+    if (tabSyncRef.current) {
+      tabSyncRef.current.persist(next);
+    }
   }
 
   function persistBorrows(next) {
@@ -1170,6 +1204,19 @@ function App() {
   function persistCriticalNotifies(next) {
     setCriticalNotifies(next);
     persistNotifies(next);
+  }
+
+  function handleConflictResolve(strategy) {
+    if (!conflictInfo) return;
+    const { externalRecords, localRecords, baseRecords } = conflictInfo;
+    const resolved = resolveConflict(strategy, localRecords, externalRecords, baseRecords);
+    persist(resolved);
+    if (selected) {
+      const updatedSelected = resolved.find((r) => r.id === selected.id);
+      setSelected(updatedSelected || null);
+    }
+    setConflictInfo(null);
+    setShowConflictModal(false);
   }
 
   function handlePhrasesPersist(next) {
@@ -4366,6 +4413,141 @@ function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConflictModal && conflictInfo && (
+        <div className="batch-overlay" style={{ zIndex: 200 }}>
+          <div className="batch-modal conflict-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header conflict-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <ArrowRightLeft size={18} />
+                <h2>多标签页数据冲突</h2>
+              </div>
+            </div>
+            <div className="batch-body conflict-body">
+              <div className="conflict-alert">
+                <AlertTriangle size={20} />
+                <div>
+                  <strong>检测到其他标签页对阅片队列进行了修改</strong>
+                  <p>本页数据与外部更新存在冲突，请选择处理方式。</p>
+                </div>
+              </div>
+
+              <div className="conflict-summary">
+                <div className="conflict-stat conflict-stat-danger">
+                  <span className="conflict-stat-value">{conflictInfo.conflicts.length}</span>
+                  <span className="conflict-stat-label">冲突病例</span>
+                </div>
+                <div className="conflict-stat">
+                  <span className="conflict-stat-value">{conflictInfo.localOnlyAdditions.length}</span>
+                  <span className="conflict-stat-label">本页新增</span>
+                </div>
+                <div className="conflict-stat">
+                  <span className="conflict-stat-value">{conflictInfo.externalOnlyAdditions.length}</span>
+                  <span className="conflict-stat-label">外部新增</span>
+                </div>
+                <div className="conflict-stat">
+                  <span className="conflict-stat-value">{conflictInfo.localOnlyRemovals.length}</span>
+                  <span className="conflict-stat-label">本页删除</span>
+                </div>
+                <div className="conflict-stat">
+                  <span className="conflict-stat-value">{conflictInfo.externalOnlyRemovals.length}</span>
+                  <span className="conflict-stat-label">外部删除</span>
+                </div>
+              </div>
+
+              {conflictInfo.conflicts.length > 0 && (
+                <div className="conflict-details">
+                  <div className="conflict-details-title">
+                    <AlertTriangle size={14} />
+                    冲突病例详情
+                  </div>
+                  {conflictInfo.conflicts.map((c) => (
+                    <div key={c.id} className="conflict-case-item">
+                      <div className="conflict-case-header">
+                        <span className="conflict-case-no">{c.caseNo}</span>
+                        <span className={`conflict-type-badge conflict-type-${c.type}`}>
+                          {c.type === 'modify-vs-modify' && '双方修改'}
+                          {c.type === 'modify-vs-delete' && '本页修改/外部删除'}
+                          {c.type === 'delete-vs-modify' && '本页删除/外部修改'}
+                        </span>
+                      </div>
+                      {c.type === 'modify-vs-modify' && c.localRecord && c.externalRecord && (
+                        <div className="conflict-case-compare">
+                          <div className="conflict-case-side conflict-side-local">
+                            <div className="conflict-side-label">本页版本</div>
+                            <div className="conflict-side-content">
+                              <span className={'status ' + statusClass(c.localRecord.status)}>{c.localRecord.status}</span>
+                              <span>{c.localRecord.doctor}</span>
+                              <span>{c.localRecord.priority}</span>
+                              {(c.localRecord.reviews || []).length > 0 && (
+                                <span className="conflict-review-count">
+                                  <ShieldCheck size={11} />{(c.localRecord.reviews || []).length}条复核
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="conflict-case-side conflict-side-external">
+                            <div className="conflict-side-label">外部版本</div>
+                            <div className="conflict-side-content">
+                              <span className={'status ' + statusClass(c.externalRecord.status)}>{c.externalRecord.status}</span>
+                              <span>{c.externalRecord.doctor}</span>
+                              <span>{c.externalRecord.priority}</span>
+                              {(c.externalRecord.reviews || []).length > 0 && (
+                                <span className="conflict-review-count">
+                                  <ShieldCheck size={11} />{(c.externalRecord.reviews || []).length}条复核
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="conflict-strategies">
+                <div className="conflict-strategies-title">选择处理方式</div>
+                <div className="conflict-strategy-options">
+                  <button
+                    className="conflict-strategy-btn strategy-keep-local"
+                    type="button"
+                    onClick={() => handleConflictResolve('keep-local')}
+                  >
+                    <div className="strategy-icon"><Save size={20} /></div>
+                    <div className="strategy-info">
+                      <strong>保留本页</strong>
+                      <p>丢弃外部更新，保留本页所有修改。外部标签页的更改将被覆盖。</p>
+                    </div>
+                  </button>
+                  <button
+                    className="conflict-strategy-btn strategy-adopt-latest"
+                    type="button"
+                    onClick={() => handleConflictResolve('adopt-latest')}
+                  >
+                    <div className="strategy-icon"><RotateCcw size={20} /></div>
+                    <div className="strategy-info">
+                      <strong>采用最新</strong>
+                      <p>丢弃本页修改，采用外部标签页的最新数据。本页未保存的更改将丢失。</p>
+                    </div>
+                  </button>
+                  <button
+                    className="conflict-strategy-btn strategy-merge"
+                    type="button"
+                    onClick={() => handleConflictResolve('merge')}
+                  >
+                    <div className="strategy-icon"><Layers size={20} /></div>
+                    <div className="strategy-info">
+                      <strong>按病例合并</strong>
+                      <p>智能合并双方修改：合并状态时间线、保留双方复核意见、按时间取最新标量字段、合并新增记录。删除冲突需人工确认。</p>
+                    </div>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
