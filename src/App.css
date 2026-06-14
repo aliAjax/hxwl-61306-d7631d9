@@ -2635,6 +2635,31 @@ textarea { min-height: 76px; resize: vertical; }
   border-left: 4px solid #7c3aed;
 }
 
+.phrase-card-pinned {
+  border-left: 4px solid #f59e0b;
+  background: linear-gradient(135deg, #fffbeb 0%, #ffffff 60%);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.12);
+}
+
+.phrase-content-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.phrase-pinned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .phrase-content p {
   color: #374151;
   font-size: 13px;
@@ -2656,6 +2681,29 @@ textarea { min-height: 76px; resize: vertical; }
   margin-top: 10px;
   font-size: 12px;
   color: #9ca3af;
+}
+
+.phrase-pin-btn {
+  color: #f59e0b;
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.phrase-pin-btn:hover {
+  background: #f59e0b;
+  color: white;
+  border-color: #f59e0b;
+}
+
+.phrase-pin-btn.is-pinned {
+  background: #f59e0b;
+  color: white;
+  border-color: #f59e0b;
+}
+
+.phrase-pin-btn.is-pinned:hover {
+  background: #d97706;
+  border-color: #d97706;
 }
 
 .detail-summary-section {
@@ -2751,6 +2799,76 @@ textarea { min-height: 76px; resize: vertical; }
   border-left-color: #7c3aed;
   box-shadow: 0 4px 12px rgba(124, 58, 237, 0.1);
   background: #faf5ff;
+}
+
+.phrase-picker-pinned {
+  border-left: 3px solid #f59e0b;
+  background: linear-gradient(135deg, #fffbeb 0%, #ffffff 70%);
+}
+
+.phrase-picker-pinned:hover {
+  border-left-color: #f59e0b;
+  background: linear-gradient(135deg, #fef3c7 0%, #faf5ff 100%);
+}
+
+.phrase-picker-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phrase-picker-item-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.phrase-picker-pinned-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.phrase-picker-pin-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #f59e0b;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.phrase-picker-pin-btn:hover {
+  background: #f59e0b;
+  color: white;
+  border-color: #f59e0b;
+}
+
+.phrase-picker-pin-btn.is-pinned {
+  background: #f59e0b;
+  color: white;
+  border-color: #f59e0b;
+}
+
+.phrase-picker-pin-btn.is-pinned:hover {
+  background: #d97706;
+  border-color: #d97706;
 }
 
 .phrase-picker-item-content p {

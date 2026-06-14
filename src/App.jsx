@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff } from 'lucide-react';
 import { TabSync } from './tabSync';
 import { ConfigManager } from './components/ConfigManager';
 import {
@@ -31,7 +31,7 @@ const ICON_MAP = {
   FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save,
   UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home,
   CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail,
-  Megaphone, HandHeart, Timer, Radio, Settings, CircleDot
+  Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff
 };
 
 function safeGetIcon(iconName) {
@@ -134,49 +134,65 @@ const PHRASE_LIBRARY_SEED = [
     phrase: '镜下见肿瘤细胞呈巢状排列，核大深染，核分裂象易见，考虑为恶性肿瘤。',
     sampleType: '手术切除',
     useCount: 12,
-    lastUsedAt: '2026-06-12T10:30:00.000Z'
+    lastUsedAt: '2026-06-12T10:30:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   },
   {
     phrase: '胃黏膜慢性炎，伴肠上皮化生，未见异型增生，建议定期复查。',
     sampleType: '胃镜',
     useCount: 25,
-    lastUsedAt: '2026-06-13T14:20:00.000Z'
+    lastUsedAt: '2026-06-13T14:20:00.000Z',
+    pinned: true,
+    pinnedAt: '2026-06-13T14:20:00.000Z'
   },
   {
     phrase: '结肠黏膜慢性炎，可见溃疡形成，伴炎性息肉，建议治疗后复查。',
     sampleType: '肠镜',
     useCount: 18,
-    lastUsedAt: '2026-06-11T09:15:00.000Z'
+    lastUsedAt: '2026-06-11T09:15:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   },
   {
     phrase: '细针穿刺涂片见异型细胞，考虑为腺癌，建议进一步活检明确诊断。',
     sampleType: '穿刺',
     useCount: 8,
-    lastUsedAt: '2026-06-10T16:45:00.000Z'
+    lastUsedAt: '2026-06-10T16:45:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   },
   {
     phrase: '细胞学检查见大量炎性细胞，未见明确癌细胞，建议结合临床。',
     sampleType: '细胞学',
     useCount: 15,
-    lastUsedAt: '2026-06-09T11:00:00.000Z'
+    lastUsedAt: '2026-06-09T11:00:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   },
   {
     phrase: '切缘未见肿瘤细胞，肿瘤浸润至浆膜层，伴淋巴结转移（2/12）。',
     sampleType: '手术切除',
     useCount: 6,
-    lastUsedAt: '2026-06-08T15:30:00.000Z'
+    lastUsedAt: '2026-06-08T15:30:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   },
   {
     phrase: '胃体溃疡型中分化腺癌，溃疡大小约2.5cm，侵及黏膜下层。',
     sampleType: '胃镜',
     useCount: 10,
-    lastUsedAt: '2026-06-13T08:50:00.000Z'
+    lastUsedAt: '2026-06-13T08:50:00.000Z',
+    pinned: true,
+    pinnedAt: '2026-06-12T08:00:00.000Z'
   },
   {
     phrase: '乳腺穿刺标本：浸润性导管癌，ER(+)，PR(+)，HER2(-)，Ki-67约30%。',
     sampleType: '穿刺',
     useCount: 4,
-    lastUsedAt: '2026-06-07T13:20:00.000Z'
+    lastUsedAt: '2026-06-07T13:20:00.000Z',
+    pinned: false,
+    pinnedAt: ''
   }
 ];
 
@@ -187,7 +203,12 @@ function loadPhrases() {
   if (raw) {
     try {
       const data = JSON.parse(raw);
-      return data.map((item) => ({ ...item, id: item.id || uid() }));
+      return data.map((item) => ({
+        ...item,
+        id: item.id || uid(),
+        pinned: typeof item.pinned === 'boolean' ? item.pinned : false,
+        pinnedAt: item.pinnedAt || ''
+      }));
     } catch {
       return withPhraseIds(PHRASE_LIBRARY_SEED);
     }
@@ -199,6 +220,8 @@ function withPhraseIds(items) {
   return items.map((item) => ({
     id: uid(),
     createdAt: item.createdAt || new Date().toISOString(),
+    pinned: typeof item.pinned === 'boolean' ? item.pinned : false,
+    pinnedAt: item.pinnedAt || '',
     ...item
   }));
 }
@@ -1347,6 +1370,8 @@ function App() {
         sampleType: phraseForm.sampleType,
         useCount: 0,
         lastUsedAt: '',
+        pinned: false,
+        pinnedAt: '',
         createdAt: now
       };
       handlePhrasesPersist([newPhrase, ...phrases]);
@@ -1376,6 +1401,20 @@ function App() {
             ...item,
             useCount: (item.useCount || 0) + 1,
             lastUsedAt: now
+          }
+        : item
+    );
+    handlePhrasesPersist(next);
+  }
+
+  function togglePhrasePin(id) {
+    const now = new Date().toISOString();
+    const next = phrases.map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            pinned: !item.pinned,
+            pinnedAt: !item.pinned ? now : ''
           }
         : item
     );
@@ -1634,6 +1673,13 @@ function App() {
         return true;
       })
       .sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        if (a.pinned && b.pinned) {
+          const pinA = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+          const pinB = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+          return pinB - pinA;
+        }
         if (a.lastUsedAt && b.lastUsedAt) {
           return new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime();
         }
@@ -4452,10 +4498,17 @@ function App() {
                 {filteredPhrases.map((item) => (
                   <article
                     key={item.id}
-                    className="borrow-card phrase-card"
+                    className={`borrow-card phrase-card ${item.pinned ? 'phrase-card-pinned' : ''}`}
                   >
                     <div className="borrow-card-head">
                       <div className="phrase-content">
+                        <div className="phrase-content-header">
+                          {item.pinned && (
+                            <span className="phrase-pinned-badge">
+                              <Pin size={11} />置顶
+                            </span>
+                          )}
+                        </div>
                         <p>{item.phrase}</p>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
@@ -4473,6 +4526,15 @@ function App() {
                       </p>
                     )}
                     <div className="borrow-card-actions">
+                      <button
+                        className={`wb-btn phrase-pin-btn ${item.pinned ? 'is-pinned' : ''}`}
+                        type="button"
+                        onClick={() => togglePhrasePin(item.id)}
+                        title={item.pinned ? '取消置顶' : '置顶'}
+                      >
+                        {item.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                        {item.pinned ? '取消置顶' : '置顶'}
+                      </button>
                       <button
                         className="wb-btn"
                         type="button"
@@ -4726,11 +4788,28 @@ function App() {
                 {filteredPhrases.map((item) => (
                   <div
                     key={item.id}
-                    className="phrase-picker-item"
+                    className={`phrase-picker-item ${item.pinned ? 'phrase-picker-pinned' : ''}`}
                     onClick={() => applyPhrase(item)}
                   >
-                    <div className="phrase-picker-item-content">
-                      <p>{item.phrase}</p>
+                    <div className="phrase-picker-item-head">
+                      <div className="phrase-picker-item-content">
+                        <div className="phrase-picker-item-tags">
+                          {item.pinned && (
+                            <span className="phrase-picker-pinned-tag">
+                              <Pin size={10} />置顶
+                            </span>
+                          )}
+                        </div>
+                        <p>{item.phrase}</p>
+                      </div>
+                      <button
+                        className={`phrase-picker-pin-btn ${item.pinned ? 'is-pinned' : ''}`}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); togglePhrasePin(item.id); }}
+                        title={item.pinned ? '取消置顶' : '置顶'}
+                      >
+                        {item.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                      </button>
                     </div>
                     <div className="phrase-picker-item-meta">
                       <span className="phrase-picker-tag">{item.sampleType}</span>
