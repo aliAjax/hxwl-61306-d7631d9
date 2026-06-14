@@ -38,16 +38,32 @@ export function diffRecordMaps(baseMap, currentMap) {
 }
 
 export function mergeTimelines(localTimeline, externalTimeline) {
-  const seen = new Set();
-  const merged = [];
+  const seen = new Map();
   const allEntries = [...(localTimeline || []), ...(externalTimeline || [])];
   for (const entry of allEntries) {
     const key = `${entry.changedAt || ''}|${entry.status || ''}|${entry.by || ''}|${entry.type || ''}|${entry.reviewId || ''}|${entry.action || ''}|${entry.event || ''}`;
     if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(entry);
+      seen.set(key, { ...entry });
+    } else {
+      const existing = seen.get(key);
+      const hasNote = (e) => e && e.note && String(e.note).trim();
+      const hasNoteBy = (e) => e && e.noteBy && String(e.noteBy).trim();
+      if (!hasNote(existing) && hasNote(entry)) {
+        seen.set(key, { ...existing, note: entry.note, noteBy: entry.noteBy || existing.noteBy });
+      } else if (hasNote(existing) && hasNote(entry)) {
+        if (existing.note !== entry.note) {
+          seen.set(key, {
+            ...existing,
+            note: [existing.note, entry.note].filter(Boolean).join('；'),
+            noteBy: [existing.noteBy, entry.noteBy].filter(Boolean).join('/')
+          });
+        }
+      } else if (!hasNoteBy(existing) && hasNoteBy(entry)) {
+        seen.set(key, { ...existing, noteBy: entry.noteBy });
+      }
     }
   }
+  const merged = Array.from(seen.values());
   merged.sort((a, b) => {
     const ta = new Date(a.changedAt || a.at || 0).getTime();
     const tb = new Date(b.changedAt || b.at || 0).getTime();

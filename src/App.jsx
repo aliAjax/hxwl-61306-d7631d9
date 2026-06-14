@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot } from 'lucide-react';
 import { TabSync } from './tabSync';
 import { ConfigManager } from './components/ConfigManager';
 import {
@@ -780,6 +780,9 @@ function App() {
   const [tick, setTick] = useState(0);
   const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
   const [reviewEditing, setReviewEditing] = useState(false);
+  const [noteAdding, setNoteAdding] = useState(false);
+  const [noteForm, setNoteForm] = useState({ noteText: '', noteBy: '' });
+  const [statusNoteAdding, setStatusNoteAdding] = useState(null);
   const [tatFilters, setTatFilters] = useState({ doctor: '全部', status: '全部', tatStatus: '全部' });
   const [showTatBoard, setShowTatBoard] = useState(false);
   const [activeView, setActiveView] = useState('workbench');
@@ -905,6 +908,9 @@ function App() {
       setReviewForm({ reviewDoctor: '', conclusion: '', remark: '' });
       setReviewEditing(false);
     }
+    setNoteAdding(false);
+    setNoteForm({ noteText: '', noteBy: '' });
+    setStatusNoteAdding(null);
   }, [selected]);
 
   function handleReviewSubmit(e) {
@@ -928,11 +934,14 @@ function App() {
           ...item,
           reviews: newReviews,
           timeline: [...(item.timeline || []), {
+            type: 'review-status',
             status: '复核意见',
             at: today,
             by: reviewForm.reviewDoctor.trim(),
             changedAt: now,
-            reviewId: reviewRecord.id
+            reviewId: reviewRecord.id,
+            note: reviewForm.remark.trim() || undefined,
+            noteBy: reviewForm.reviewDoctor.trim()
           }]
         };
       }
@@ -1895,9 +1904,10 @@ function App() {
       const merged = [];
 
       (record.timeline || []).forEach((step) => {
+        const inferredType = step.type || (step.status === '复核意见' ? 'review-status' : (step.status === '派单' ? undefined : undefined));
         merged.push({
           ...step,
-          type: 'review-status',
+          type: inferredType,
           sortTime: new Date(step.changedAt || step.at).getTime()
         });
       });
@@ -1978,15 +1988,78 @@ function App() {
     setSelected(nextRecord);
   }
 
-  function updateStatus(id, status) {
+  function updateStatus(id, status, noteInfo) {
     const now = new Date().toISOString();
-    const next = records.map((item) => item.id === id ? {
-      ...item,
-      status,
-      timeline: [...(item.timeline || []), { status, at: today, by: '操作员', changedAt: now }]
-    } : item);
+    const next = records.map((item) => {
+      if (item.id === id) {
+        const timelineEntry = { status, at: today, by: '操作员', changedAt: now };
+        if (noteInfo && noteInfo.noteText) {
+          timelineEntry.note = noteInfo.noteText;
+          timelineEntry.noteBy = noteInfo.noteBy || '操作员';
+        }
+        return {
+          ...item,
+          status,
+          timeline: [...(item.timeline || []), timelineEntry]
+        };
+      }
+      return item;
+    });
     persist(next);
     if (selected?.id === id) setSelected(next.find((item) => item.id === id));
+  }
+
+  function addNote(recordId, noteText, noteBy) {
+    if (!noteText?.trim()) return;
+    const now = new Date().toISOString();
+    const next = records.map((item) => {
+      if (item.id === recordId) {
+        return {
+          ...item,
+          timeline: [...(item.timeline || []), {
+            type: 'case-note',
+            event: '关键事件备注',
+            note: noteText.trim(),
+            noteBy: noteBy?.trim() || '医生',
+            at: today,
+            by: noteBy?.trim() || '医生',
+            changedAt: now
+          }]
+        };
+      }
+      return item;
+    });
+    persist(next);
+    if (selected?.id === recordId) setSelected(next.find((item) => item.id === recordId));
+  }
+
+  function handleNoteSubmit(e) {
+    e.preventDefault();
+    if (!selected || !noteForm.noteText.trim()) return;
+    addNote(selected.id, noteForm.noteText, noteForm.noteBy);
+    setNoteForm({ noteText: '', noteBy: '' });
+    setNoteAdding(false);
+  }
+
+  function handleNoteCancel() {
+    setNoteForm({ noteText: '', noteBy: '' });
+    setNoteAdding(false);
+  }
+
+  function handleStatusNoteSubmit(e, id, status) {
+    e.preventDefault();
+    if (!noteForm.noteText.trim()) {
+      updateStatus(id, status);
+    } else {
+      updateStatus(id, status, { noteText: noteForm.noteText, noteBy: noteForm.noteBy });
+    }
+    setNoteForm({ noteText: '', noteBy: '' });
+    setStatusNoteAdding(null);
+  }
+
+  function handleStatusNoteCancel() {
+    setNoteForm({ noteText: '', noteBy: '' });
+    setStatusNoteAdding(null);
   }
 
   function removeRecord(id) {
@@ -2385,12 +2458,12 @@ function App() {
                       </div>
                       <div className="workbench-card-actions" onClick={(e) => e.stopPropagation()}>
                         {prevStatus(queueConfig, item.status) && (
-                          <button className="wb-btn wb-btn-prev" type="button" onClick={() => updateStatus(item.id, prevStatus(queueConfig, item.status))}>
+                          <button className="wb-btn wb-btn-prev" type="button" onClick={() => setStatusNoteAdding({ id: item.id, status: prevStatus(queueConfig, item.status) })}>
                             ← {prevStatus(queueConfig, item.status)}
                           </button>
                         )}
                         {nextStatus(queueConfig, item.status) && (
-                          <button className="wb-btn wb-btn-next" type="button" style={{ '--zone-color': zone.color }} onClick={() => updateStatus(item.id, nextStatus(queueConfig, item.status))}>
+                          <button className="wb-btn wb-btn-next" type="button" style={{ '--zone-color': zone.color }} onClick={() => setStatusNoteAdding({ id: item.id, status: nextStatus(queueConfig, item.status) })}>
                             {nextStatus(queueConfig, item.status)} →
                           </button>
                         )}
@@ -2657,7 +2730,7 @@ function App() {
                 {(item.conflict || hasOverlap(item, records)) && <div className="warning"><AlertTriangle size={15} />发现冲突</div>}
                 <div className="actions" onClick={(event) => event.stopPropagation()}>
                   {getStatusNames(queueConfig).map((status) => (
-                    <button key={status} type="button" onClick={() => updateStatus(item.id, status)}>{status}</button>
+                    <button key={status} type="button" onClick={() => setStatusNoteAdding({ id: item.id, status })}>{status}</button>
                   ))}
                   <button type="button" onClick={() => duplicateRecord(item)}><RotateCcw size={14} />复制</button>
                   <button className="ghost-danger" type="button" onClick={() => removeRecord(item.id)}><Trash2 size={14} /></button>
@@ -2980,6 +3053,55 @@ function App() {
                 );
               })()}
 
+              <div className="case-note-section">
+                <div className="review-header">
+                  <div className="panel-title" style={{ margin: 0 }}>
+                    <MessageSquare size={16} />
+                    <h2 style={{ fontSize: '16px' }}>关键事件备注</h2>
+                  </div>
+                  {!noteAdding && (
+                    <button type="button" className="review-edit-btn" onClick={() => setNoteAdding(true)}>
+                      <Plus size={14} />添加备注
+                    </button>
+                  )}
+                </div>
+
+                {noteAdding && (
+                  <form className="note-form" onSubmit={handleNoteSubmit}>
+                    <label>
+                      <span><User size={13} />记录人</span>
+                      <input
+                        type="text"
+                        value={noteForm.noteBy}
+                        onChange={(e) => setNoteForm({ ...noteForm, noteBy: e.target.value })}
+                        placeholder="请输入记录人姓名（选填）"
+                      />
+                    </label>
+                    <label className="wide">
+                      <span className="review-field-label">
+                        <FileText size={13} />备注内容
+                      </span>
+                      <textarea
+                        value={noteForm.noteText}
+                        onChange={(e) => setNoteForm({ ...noteForm, noteText: e.target.value })}
+                        placeholder="请输入关键事件备注..."
+                        rows={3}
+                        required
+                        autoFocus
+                      />
+                    </label>
+                    <div className="review-form-actions">
+                      <button type="submit" className="primary" disabled={!noteForm.noteText.trim()}>
+                        <Save size={14} />保存
+                      </button>
+                      <button type="button" className="secondary" onClick={handleNoteCancel}>
+                        <X size={14} />取消
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
               <div className="timeline">
                 {getMergedTimelineWithNotify(selected).map((step, index) => {
                   const isReview = step.type === 'review-status' && step.status === '复核意见';
@@ -2990,6 +3112,8 @@ function App() {
                   const isSlideOverdue = step.type === 'slide-overdue';
                   const isNotifySent = step.type === 'critical-notify-sent';
                   const isNotifyConfirmed = step.type === 'critical-notify-confirmed';
+                  const isCaseNote = step.type === 'case-note';
+                  const hasNote = step.note && !isCaseNote;
                   const reviewForStep = isReview
                     ? (selected.reviews || []).find((r) => r.id === step.reviewId)
                     : null;
@@ -3019,7 +3143,7 @@ function App() {
                   }
                   displayText += ` · ${step.by}`;
                   return (
-                    <span key={index} className={`
+                    <div key={index} className={`timeline-item
                       ${isReview ? 'timeline-review' : ''}
                       ${isDispatch ? 'timeline-dispatch' : ''}
                       ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
@@ -3028,9 +3152,17 @@ function App() {
                       ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
                       ${isNotifySent ? 'timeline-notify-sent' : ''}
                       ${isNotifyConfirmed ? 'timeline-notify-confirmed' : ''}
+                      ${isCaseNote ? 'timeline-case-note' : ''}
+                      ${hasNote ? 'timeline-has-note' : ''}
                     `}>
-                      {displayText}
-                    </span>
+                      <span className="timeline-text">{displayText}</span>
+                      {(isCaseNote || hasNote) && (
+                        <div className="timeline-note-content">
+                          <MessageSquare size={12} />
+                          <span>{isCaseNote ? step.note : step.note}</span>
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -3652,6 +3784,8 @@ function App() {
                         const isSlideReturn = step.type === 'slide-return';
                         const isSlideOverdue = step.type === 'slide-overdue';
                         const isDispatch = step.status === '派单';
+                        const isCaseNote = step.type === 'case-note';
+                        const hasNote = step.note && !isCaseNote;
 
                         let displayText = `${step.at} · `;
                         if (isReview) {
@@ -3673,19 +3807,27 @@ function App() {
                         displayText += ` · ${step.by}`;
 
                         return (
-                          <span
+                          <div
                             key={index}
-                            className={`
+                            className={`timeline-item
                               ${isReview && step.status === '复核意见' ? 'timeline-review' : ''}
                               ${isDispatch ? 'timeline-dispatch' : ''}
                               ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
                               ${isSlideReceive ? 'timeline-slide-receive' : ''}
                               ${isSlideReturn ? 'timeline-slide-return' : ''}
                               ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
+                              ${isCaseNote ? 'timeline-case-note' : ''}
+                              ${hasNote ? 'timeline-has-note' : ''}
                             `}
                           >
-                            {displayText}
-                          </span>
+                            <span className="timeline-text">{displayText}</span>
+                            {(isCaseNote || hasNote) && (
+                              <div className="timeline-note-content">
+                                <MessageSquare size={12} />
+                                <span>{step.note}</span>
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -4110,6 +4252,8 @@ function App() {
                         const isDispatch = step.status === '派单';
                         const isNotifySent = step.type === 'critical-notify-sent';
                         const isNotifyConfirmed = step.type === 'critical-notify-confirmed';
+                        const isCaseNote = step.type === 'case-note';
+                        const hasNote = step.note && !isCaseNote;
 
                         let displayText = `${step.at} · `;
                         if (isReview || step.type === 'review-status') {
@@ -4137,9 +4281,9 @@ function App() {
                         displayText += ` · ${step.by}`;
 
                         return (
-                          <span
+                          <div
                             key={index}
-                            className={`
+                            className={`timeline-item
                               ${isReview && step.status === '复核意见' ? 'timeline-review' : ''}
                               ${isDispatch ? 'timeline-dispatch' : ''}
                               ${isSlideBorrow ? 'timeline-slide-borrow' : ''}
@@ -4148,10 +4292,18 @@ function App() {
                               ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
                               ${isNotifySent ? 'timeline-notify-sent' : ''}
                               ${isNotifyConfirmed ? 'timeline-notify-confirmed' : ''}
+                              ${isCaseNote ? 'timeline-case-note' : ''}
+                              ${hasNote ? 'timeline-has-note' : ''}
                             `}
                           >
-                            {displayText}
-                          </span>
+                            <span className="timeline-text">{displayText}</span>
+                            {(isCaseNote || hasNote) && (
+                              <div className="timeline-note-content">
+                                <MessageSquare size={12} />
+                                <span>{step.note}</span>
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -4782,6 +4934,59 @@ function App() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {statusNoteAdding && (
+        <div className="batch-overlay" onClick={handleStatusNoteCancel}>
+          <div className="batch-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="batch-header">
+              <div className="panel-title" style={{ marginBottom: 0 }}>
+                <MessageSquare size={18} />
+                <h2>状态流转备注（选填）</h2>
+              </div>
+              <button className="batch-close" onClick={handleStatusNoteCancel}><X size={18} /></button>
+            </div>
+
+            <div className="batch-body">
+              <p className="hint">
+                即将流转至状态：<strong style={{ color: 'var(--accent)' }}>{statusNoteAdding.status}</strong>
+                <br />
+                可补充本次流转的备注说明，也可直接跳过。
+              </p>
+              <form className="note-form" onSubmit={(e) => handleStatusNoteSubmit(e, statusNoteAdding.id, statusNoteAdding.status)}>
+                <label>
+                  <span><User size={13} />操作人</span>
+                  <input
+                    type="text"
+                    value={noteForm.noteBy}
+                    onChange={(e) => setNoteForm({ ...noteForm, noteBy: e.target.value })}
+                    placeholder="请输入操作人姓名（选填）"
+                  />
+                </label>
+                <label>
+                  <span>
+                    <MessageSquare size={13} />备注说明
+                  </span>
+                  <textarea
+                    value={noteForm.noteText}
+                    onChange={(e) => setNoteForm({ ...noteForm, noteText: e.target.value })}
+                    placeholder="请输入备注说明（选填）"
+                    rows={3}
+                    autoFocus
+                  />
+                </label>
+                <div className="review-form-actions">
+                  <button type="submit" className="primary">
+                    <Save size={14} />确认流转{noteForm.noteText.trim() ? '并保存备注' : ''}
+                  </button>
+                  <button type="button" className="secondary" onClick={handleStatusNoteCancel}>
+                    <X size={14} />取消
+                  </button>
+                </div>
+              </form>
             </div>
           </div>
         </div>

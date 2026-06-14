@@ -255,11 +255,33 @@ textarea { min-height: 76px; resize: vertical; }
 .detail { display: grid; gap: 10px; }
 .detail p, .empty { color: #667085; line-height: 1.6; }
 .timeline { display: grid; gap: 6px; margin-top: 8px; }
-.timeline span {
+.timeline > span,
+.timeline-item {
   border-left: 3px solid var(--accent);
   padding: 7px 10px;
   background: #f8fafc;
   color: #475467;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.timeline-text {
+  display: block;
+}
+.timeline-note-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px dashed #cbd5e1;
+  font-size: 12px;
+  color: #334155;
+  line-height: 1.5;
+}
+.timeline-note-content svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  opacity: 0.7;
 }
 .temp-chart {
   display: flex;
@@ -587,6 +609,55 @@ textarea { min-height: 76px; resize: vertical; }
   background: #f8fafc;
   border: 1px solid #e4e7ec;
   border-radius: 8px;
+}
+
+.case-note-section {
+  margin-top: 14px;
+  padding: 14px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+}
+
+.case-note-section .review-header {
+  margin-bottom: 12px;
+}
+
+.note-form {
+  display: grid;
+  gap: 10px;
+}
+
+.note-form label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.note-form label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #344054;
+}
+
+.note-form input,
+.note-form textarea {
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.note-form .review-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.note-form .review-form-actions .primary,
+.note-form .review-form-actions .secondary {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-top: 0;
 }
 
 .review-header {
@@ -2531,6 +2602,22 @@ textarea { min-height: 76px; resize: vertical; }
   background: #f0fdf4 !important;
   color: #047857 !important;
   font-weight: 500 !important;
+}
+
+.timeline-case-note {
+  border-left-color: #0ea5e9 !important;
+  background: #f0f9ff !important;
+  color: #0369a1 !important;
+  font-weight: 500 !important;
+}
+
+.timeline-case-note .timeline-note-content {
+  border-top-color: #7dd3fc;
+  color: #0c4a6e;
+}
+
+.timeline-has-note .timeline-note-content {
+  color: #334155;
 }
 
 @media (max-width: 980px) {
