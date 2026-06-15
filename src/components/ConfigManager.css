@@ -863,6 +863,17 @@
   color: #1d4ed8;
 }
 
+.cm-preview-item-rename {
+  color: #d97706;
+  background: rgba(217, 119, 6, 0.06);
+}
+.cm-preview-item-rename .cm-preview-item-name {
+  color: #b45309;
+}
+.cm-preview-item-rename:hover {
+  background: rgba(217, 119, 6, 0.12) !important;
+}
+
 .cm-preview-item-content {
   flex: 1;
   display: flex;
@@ -908,6 +919,13 @@
   background: #f1f5f9;
   border-radius: 6px;
   font-weight: 400;
+}
+
+.cm-preview-change-tag-warning {
+  background: #fef3c7 !important;
+  color: #b45309 !important;
+  font-weight: 500 !important;
+  border: 1px solid #fde68a;
 }
 
 .cm-preview-empty {

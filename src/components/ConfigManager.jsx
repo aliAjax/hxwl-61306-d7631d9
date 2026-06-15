@@ -1214,8 +1214,8 @@ function Info({ size }) {
 }
 
 function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
-  const hasFieldChanges = diff.fields.added.length > 0 || diff.fields.removed.length > 0 || diff.fields.modified.length > 0;
-  const hasStatusChanges = diff.statuses.added.length > 0 || diff.statuses.removed.length > 0 || diff.statuses.modified.length > 0;
+  const hasFieldChanges = diff.fields.added.length > 0 || diff.fields.removed.length > 0 || diff.fields.modified.length > 0 || diff.fields.renamed.length > 0;
+  const hasStatusChanges = diff.statuses.added.length > 0 || diff.statuses.removed.length > 0 || diff.statuses.modified.length > 0 || diff.statuses.renamed.length > 0;
   const hasMetricChanges = diff.metrics.added.length > 0 || diff.metrics.removed.length > 0 || diff.metrics.modified.length > 0;
   const hasFilterChanges = diff.filters.added.length > 0 || diff.filters.removed.length > 0 || diff.filters.modified.length > 0;
   const hasOtherChanges = diff.otherChanges.length > 0;
@@ -1225,7 +1225,9 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
     diff.statuses.added.length + diff.statuses.removed.length + diff.statuses.modified.length +
     diff.metrics.added.length + diff.metrics.removed.length + diff.metrics.modified.length +
     diff.filters.added.length + diff.filters.removed.length + diff.filters.modified.length +
-    diff.otherChanges.length;
+    diff.otherChanges.length +
+    diff.fields.renamed.filter(r => !diff.fields.modified.find(m => m.key === r.newKey)).length +
+    diff.statuses.renamed.filter(r => !diff.statuses.modified.find(m => m.name === r.newName)).length;
 
   return (
     <div className="cm-preview-overlay" onClick={onCancel}>
@@ -1261,7 +1263,7 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
                 <Layers size={16} />
                 <span>病例字段</span>
                 <span className="cm-preview-section-count">
-                  {diff.fields.added.length + diff.fields.removed.length + diff.fields.modified.length} 项
+                  {diff.fields.added.length + diff.fields.removed.length + Math.max(diff.fields.modified.length, diff.fields.renamed.length)} 项
                 </span>
               </div>
               <div className="cm-preview-list">
@@ -1271,6 +1273,7 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
                   <div className="cm-preview-item-content">
                     <span className="cm-preview-item-label">新增字段</span>
                     <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.key}</span>
                     <span className="cm-preview-item-type">{f.type}</span>
                   </div>
                 </div>
@@ -1281,19 +1284,22 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
                   <div className="cm-preview-item-content">
                     <span className="cm-preview-item-label">删除字段</span>
                     <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.key}</span>
                     <span className="cm-preview-item-type">{f.type}</span>
                   </div>
                 </div>
               ))}
               {diff.fields.modified.map((f) => (
-                <div key={`mod-${f.key}`} className="cm-preview-item cm-preview-item-modify">
-                  <Edit3 size={16} />
+                <div key={`mod-${f.key}`} className={`cm-preview-item ${diff.fields.renamed.some(r => r.newKey === f.key) ? 'cm-preview-item-rename' : 'cm-preview-item-modify'}`}>
+                  {diff.fields.renamed.some(r => r.newKey === f.key) ? <RefreshCw size={16} /> : <Edit3 size={16} />}
                   <div className="cm-preview-item-content">
-                    <span className="cm-preview-item-label">修改字段</span>
+                    <span className="cm-preview-item-label">
+                      {diff.fields.renamed.some(r => r.newKey === f.key) ? '字段Key变更' : '修改字段'}
+                    </span>
                     <span className="cm-preview-item-name">{f.label}</span>
                     <div className="cm-preview-item-changes">
                       {f.changes.map((c, i) => (
-                      <span key={i} className="cm-preview-change-tag">{c}</span>
+                      <span key={i} className={`cm-preview-change-tag ${c.startsWith('字段key') ? 'cm-preview-change-tag-warning' : ''}`}>{c}</span>
                     ))}
                     </div>
                   </div>
@@ -1309,7 +1315,7 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
                 <ArrowUpDown size={16} />
                 <span>状态流转</span>
                 <span className="cm-preview-section-count">
-                  {diff.statuses.added.length + diff.statuses.removed.length + diff.statuses.modified.length} 项
+                  {diff.statuses.added.length + diff.statuses.removed.length + Math.max(diff.statuses.modified.length, diff.statuses.renamed.length)} 项
                 </span>
               </div>
               <div className="cm-preview-list">
@@ -1331,20 +1337,25 @@ function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
                   </div>
                 </div>
               ))}
-              {diff.statuses.modified.map((s) => (
-                <div key={`mod-${s.name}`} className="cm-preview-item cm-preview-item-modify">
-                  <Edit3 size={16} />
-                  <div className="cm-preview-item-content">
-                    <span className="cm-preview-item-label">修改状态</span>
-                    <span className="cm-preview-item-name">{s.name}</span>
-                    <div className="cm-preview-item-changes">
-                      {s.changes.map((c, i) => (
-                      <span key={i} className="cm-preview-change-tag">{c}</span>
-                    ))}
+              {diff.statuses.modified.map((s) => {
+                const isRenamed = diff.statuses.renamed.some(r => r.newName === s.name || r.oldName === s.name);
+                return (
+                  <div key={`mod-${s.name}`} className={`cm-preview-item ${isRenamed ? 'cm-preview-item-rename' : 'cm-preview-item-modify'}`}>
+                    {isRenamed ? <RefreshCw size={16} /> : <Edit3 size={16} />}
+                    <div className="cm-preview-item-content">
+                      <span className="cm-preview-item-label">
+                        {isRenamed ? '状态名称变更' : '修改状态'}
+                      </span>
+                      <span className="cm-preview-item-name">{s.name}</span>
+                      <div className="cm-preview-item-changes">
+                        {s.changes.map((c, i) => (
+                        <span key={i} className={`cm-preview-change-tag ${c.startsWith('名称') ? 'cm-preview-change-tag-warning' : ''}`}>{c}</span>
+                      ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               </div>
             </div>
           )}

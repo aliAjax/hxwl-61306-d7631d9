@@ -611,7 +611,7 @@ export function buildCardMeta(config, item) {
 export function diffConfig(oldConfig, newConfig) {
   const result = {
     hasChanges: false,
-    fields: { added: [], removed: [], modified: [] },
+    fields: { added: [], removed: [], modified: [], renamed: [] },
     statuses: { added: [], removed: [], modified: [], renamed: [] },
     metrics: { added: [], removed: [], modified: [] },
     filters: { added: [], removed: [], modified: [] },
@@ -627,8 +627,8 @@ export function diffConfig(oldConfig, newConfig) {
 
   const oldFields = ensureArray(oldConfig.fields, []);
   const newFields = ensureArray(newConfig.fields, []);
-  const oldFieldMap = new Map(oldFields.map((f) => [f.key, f]));
-  const newFieldMap = new Map(newFields.map((f) => [f.key, f]));
+  const oldFieldIdMap = new Map(oldFields.map((f) => [f.id, f]));
+  const newFieldIdMap = new Map(newFields.map((f) => [f.id, f]));
   const oldFieldIds = new Set(oldFields.map((f) => f.id));
   const newFieldIds = new Set(newFields.map((f) => f.id));
 
@@ -636,9 +636,13 @@ export function diffConfig(oldConfig, newConfig) {
     if (!oldFieldIds.has(f.id)) {
       result.fields.added.push({ key: f.key, label: f.label, type: f.type });
     } else {
-      const old = oldFieldMap.get(f.key);
+      const old = oldFieldIdMap.get(f.id);
       if (old) {
         const changes = [];
+        if (old.key !== f.key) {
+          changes.push(`字段key: "${old.key}" → "${f.key}"`);
+          result.fields.renamed.push({ oldKey: old.key, newKey: f.key, label: f.label });
+        }
         if (old.label !== f.label) changes.push(`标签: "${old.label}" → "${f.label}"`);
         if (old.type !== f.type) changes.push(`类型: ${old.type} → ${f.type}`);
         if (old.required !== f.required) changes.push(`必填: ${old.required ? '是' : '否'} → ${f.required ? '是' : '否'}`);
@@ -647,8 +651,10 @@ export function diffConfig(oldConfig, newConfig) {
         if (old.sortable !== f.sortable) changes.push(`可排序: ${old.sortable ? '是' : '否'} → ${f.sortable ? '是' : '否'}`);
         if (old.dateKey !== f.dateKey) changes.push(`时间字段: ${old.dateKey ? '是' : '否'} → ${f.dateKey ? '是' : '否'}`);
         if (JSON.stringify(old.options || []) !== JSON.stringify(f.options || [])) changes.push('选项变更');
+        if (JSON.stringify(old.sortWeights || {}) !== JSON.stringify(f.sortWeights || {})) changes.push('排序权重变更');
+        if (old.cardPosition !== f.cardPosition) changes.push(`卡片位置: "${old.cardPosition || '无'}" → "${f.cardPosition || '无'}"`);
         if (changes.length > 0) {
-          result.fields.modified.push({ key: f.key, label: f.label, changes });
+          result.fields.modified.push({ key: f.key, oldKey: old.key, label: f.label, changes });
         }
       }
     }
@@ -782,6 +788,7 @@ export function diffConfig(oldConfig, newConfig) {
 
   result.requiresMigration =
     result.fields.removed.length > 0 ||
+    result.fields.renamed.length > 0 ||
     result.statuses.removed.length > 0 ||
     result.statuses.renamed.length > 0 ||
     result.fields.added.length > 0;
@@ -789,16 +796,28 @@ export function diffConfig(oldConfig, newConfig) {
   if (result.requiresMigration) {
     const impacts = [];
     if (result.fields.removed.length > 0) {
-      impacts.push(`删除 ${result.fields.removed.length} 个字段，相关病例数据将保留但不再显示`);
+      const removedNames = result.fields.removed.map(f => `"${f.label}"(${f.key})`).join('、');
+      impacts.push(`删除 ${result.fields.removed.length} 个字段（${removedNames}），相关病例数据将保留但不再显示`);
     }
     if (result.fields.added.length > 0) {
-      impacts.push(`新增 ${result.fields.added.length} 个字段，历史病例将填充默认值`);
+      const addedNames = result.fields.added.map(f => `"${f.label}"(${f.key})`).join('、');
+      impacts.push(`新增 ${result.fields.added.length} 个字段（${addedNames}），历史病例将填充默认值`);
+    }
+    if (result.fields.renamed.length > 0) {
+      const renamedDesc = result.fields.renamed
+        .map(r => `"${r.label}": ${r.oldKey} → ${r.newKey}`)
+        .join('；');
+      impacts.push(`重命名 ${result.fields.renamed.length} 个字段key（${renamedDesc}），历史病例数据将自动映射到新key`);
     }
     if (result.statuses.removed.length > 0) {
-      impacts.push(`删除 ${result.statuses.removed.length} 个状态，相关病例将重置为初始状态`);
+      const removedNames = result.statuses.removed.map(s => `"${s.name}"`).join('、');
+      impacts.push(`删除 ${result.statuses.removed.length} 个状态（${removedNames}），相关病例将重置为初始状态`);
     }
     if (result.statuses.renamed.length > 0) {
-      impacts.push(`重命名 ${result.statuses.renamed.length} 个状态，相关病例状态将同步更新`);
+      const renamedDesc = result.statuses.renamed
+        .map(r => `${r.oldName} → ${r.newName}`)
+        .join('；');
+      impacts.push(`重命名 ${result.statuses.renamed.length} 个状态（${renamedDesc}），相关病例状态将同步更新`);
     }
     result.migrationImpact.description = impacts.join('；');
   }
