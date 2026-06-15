@@ -337,6 +337,16 @@ function getNotifyEscalations(notifyId, notifies) {
   return notifies.filter((n) => n.parentNotifyId === notifyId);
 }
 
+function loadLatestCriticalNotifies() {
+  try {
+    const raw = localStorage.getItem(CRITICAL_NOTIFY_STORAGE);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
 function isCriticalNotifyEligible(config, record) {
   return isCriticalEligible(config, record);
 }
@@ -972,6 +982,22 @@ function App() {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!showEscalateModal || !escalateSourceNotify) return;
+    const latestNotifies = loadLatestCriticalNotifies();
+    const isDup = hasRecentEscalation(
+      escalateSourceNotify.caseId,
+      escalateSourceNotify.caseNo,
+      escalateForm.escalateTarget,
+      latestNotifies
+    );
+    if (isDup) {
+      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
+    } else {
+      setEscalateWarning('');
+    }
+  }, [showEscalateModal, escalateSourceNotify, escalateForm.escalateTarget]);
 
   useEffect(() => {
     const initialRecords = loadRecords(queueConfig);
@@ -1721,18 +1747,27 @@ function App() {
 
   function openEscalateModal(notifyItem) {
     if (!canEscalateNotify(notifyItem)) return;
-    setEscalateSourceNotify(notifyItem);
-    setEscalateForm({
+    const initialForm = {
       escalateTarget: '科室主任',
       notifyMethod: '电话',
       sentAt: new Date().toISOString().slice(0, 16),
       remark: `原通知对象「${notifyItem.notifyTarget}」未在规定时间内确认，已升级通知。`
-    });
-    setEscalateWarning('');
+    };
+    setEscalateSourceNotify(notifyItem);
+    setEscalateForm(initialForm);
+    const latestNotifies = loadLatestCriticalNotifies();
+    const isDup = hasRecentEscalation(
+      notifyItem.caseId,
+      notifyItem.caseNo,
+      initialForm.escalateTarget,
+      latestNotifies
+    );
+    if (isDup) {
+      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${initialForm.escalateTarget}」发送过升级通知，请勿重复升级`);
+    } else {
+      setEscalateWarning('');
+    }
     setShowEscalateModal(true);
-    setTimeout(() => {
-      checkEscalateDuplicate();
-    }, 50);
   }
 
   function closeEscalateModal() {
@@ -1746,11 +1781,12 @@ function App() {
       setEscalateWarning('');
       return false;
     }
+    const latestNotifies = loadLatestCriticalNotifies();
     const isDuplicate = hasRecentEscalation(
       escalateSourceNotify.caseId,
       escalateSourceNotify.caseNo,
       escalateForm.escalateTarget,
-      criticalNotifies
+      latestNotifies
     );
     if (isDuplicate) {
       setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
@@ -1764,7 +1800,18 @@ function App() {
     e.preventDefault();
     if (!escalateSourceNotify) return;
     if (!escalateForm.escalateTarget.trim() || !escalateForm.sentAt) return;
-    if (checkEscalateDuplicate()) return;
+
+    const latestNotifies = loadLatestCriticalNotifies();
+    const isDuplicate = hasRecentEscalation(
+      escalateSourceNotify.caseId,
+      escalateSourceNotify.caseNo,
+      escalateForm.escalateTarget,
+      latestNotifies
+    );
+    if (isDuplicate) {
+      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
+      return;
+    }
 
     const now = new Date().toISOString();
     const caseNo = escalateSourceNotify.caseNo;
