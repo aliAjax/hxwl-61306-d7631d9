@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Save, ChevronUp, ChevronDown, RotateCcw, Download, Upload, AlertTriangle, CheckCircle, Settings, Layers, BarChart3, Filter, ArrowUpDown, AlertCircle } from 'lucide-react';
+import { X, Plus, Trash2, Save, ChevronUp, ChevronDown, RotateCcw, Download, Upload, AlertTriangle, CheckCircle, Settings, Layers, BarChart3, Filter, ArrowUpDown, AlertCircle, Eye, Database, RefreshCw, PlusCircle, MinusCircle, Edit3 } from 'lucide-react';
 import {
   sanitizeConfig,
   validateConfig,
@@ -8,7 +8,8 @@ import {
   exportConfig,
   importConfig,
   uid,
-  evaluateMetric
+  evaluateMetric,
+  diffConfig
 } from '../config/configManager';
 import { FIELD_TYPES, METRIC_TYPES, FILTER_OPERATORS } from '../config/defaultConfig';
 import './ConfigManager.css';
@@ -29,6 +30,7 @@ export function ConfigManager({ isOpen, onClose, initialConfig, onSave, sampleRe
   const [warnings, setWarnings] = useState([]);
   const [errors, setErrors] = useState([]);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [importError, setImportError] = useState('');
 
   useEffect(() => {
@@ -48,10 +50,19 @@ export function ConfigManager({ isOpen, onClose, initialConfig, onSave, sampleRe
     return JSON.stringify(sanitizeConfig(initialConfig)) !== JSON.stringify(config);
   }, [initialConfig, config]);
 
+  const configDiff = useMemo(() => {
+    return diffConfig(sanitizeConfig(initialConfig), config);
+  }, [initialConfig, config]);
+
   function handleSave() {
+    setShowPreview(true);
+  }
+
+  function confirmSave() {
     const sanitized = sanitizeConfig(config);
     const persisted = persistConfig(sanitized);
     onSave?.(persisted);
+    setShowPreview(false);
     onClose();
   }
 
@@ -518,6 +529,14 @@ export function ConfigManager({ isOpen, onClose, initialConfig, onSave, sampleRe
               </div>
             </div>
           </div>
+        )}
+
+        {showPreview && (
+          <ConfigPreviewModal
+            diff={configDiff}
+            onConfirm={confirmSave}
+            onCancel={() => setShowPreview(false)}
+          />
         )}
       </div>
     </div>
@@ -1192,4 +1211,283 @@ function Checkbox({ label, checked, onChange, disabled = false }) {
 
 function Info({ size }) {
   return <AlertCircle size={size} />;
+}
+
+function ConfigPreviewModal({ diff, onConfirm, onCancel }) {
+  const hasFieldChanges = diff.fields.added.length > 0 || diff.fields.removed.length > 0 || diff.fields.modified.length > 0;
+  const hasStatusChanges = diff.statuses.added.length > 0 || diff.statuses.removed.length > 0 || diff.statuses.modified.length > 0;
+  const hasMetricChanges = diff.metrics.added.length > 0 || diff.metrics.removed.length > 0 || diff.metrics.modified.length > 0;
+  const hasFilterChanges = diff.filters.added.length > 0 || diff.filters.removed.length > 0 || diff.filters.modified.length > 0;
+  const hasOtherChanges = diff.otherChanges.length > 0;
+
+  const totalChanges =
+    diff.fields.added.length + diff.fields.removed.length + diff.fields.modified.length +
+    diff.statuses.added.length + diff.statuses.removed.length + diff.statuses.modified.length +
+    diff.metrics.added.length + diff.metrics.removed.length + diff.metrics.modified.length +
+    diff.filters.added.length + diff.filters.removed.length + diff.filters.modified.length +
+    diff.otherChanges.length;
+
+  return (
+    <div className="cm-preview-overlay" onClick={onCancel}>
+      <div className="cm-preview-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="cm-preview-header">
+          <div className="cm-preview-title">
+            <Eye size={20} />
+            <h3>配置变更预览</h3>
+            <span className="cm-preview-count">共 {totalChanges} 项变更</span>
+          </div>
+          <button className="cm-icon-btn" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="cm-preview-body">
+          {diff.requiresMigration && (
+            <div className="cm-preview-migration">
+              <div className="cm-preview-migration-icon">
+                <Database size={20} />
+              </div>
+              <div className="cm-preview-migration-content">
+                <h4>将触发历史病例迁移</h4>
+                <p>{diff.migrationImpact.description}</p>
+              </div>
+              <RefreshCw size={18} className="cm-preview-migration-spin" />
+            </div>
+          )}
+
+          {hasFieldChanges && (
+            <div className="cm-preview-section">
+              <div className="cm-preview-section-title">
+                <Layers size={16} />
+                <span>病例字段</span>
+                <span className="cm-preview-section-count">
+                  {diff.fields.added.length + diff.fields.removed.length + diff.fields.modified.length} 项
+                </span>
+              </div>
+              <div className="cm-preview-list">
+                {diff.fields.added.map((f) => (
+                <div key={`add-${f.key}`} className="cm-preview-item cm-preview-item-add">
+                  <PlusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">新增字段</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.fields.removed.map((f) => (
+                <div key={`del-${f.key}`} className="cm-preview-item cm-preview-item-remove">
+                  <MinusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">删除字段</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.fields.modified.map((f) => (
+                <div key={`mod-${f.key}`} className="cm-preview-item cm-preview-item-modify">
+                  <Edit3 size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">修改字段</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <div className="cm-preview-item-changes">
+                      {f.changes.map((c, i) => (
+                      <span key={i} className="cm-preview-change-tag">{c}</span>
+                    ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {hasStatusChanges && (
+            <div className="cm-preview-section">
+              <div className="cm-preview-section-title">
+                <ArrowUpDown size={16} />
+                <span>状态流转</span>
+                <span className="cm-preview-section-count">
+                  {diff.statuses.added.length + diff.statuses.removed.length + diff.statuses.modified.length} 项
+                </span>
+              </div>
+              <div className="cm-preview-list">
+                {diff.statuses.added.map((s) => (
+                <div key={`add-${s.name}`} className="cm-preview-item cm-preview-item-add">
+                  <PlusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">新增状态</span>
+                    <span className="cm-preview-item-name" style={{ color: s.color }}>{s.name}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.statuses.removed.map((s) => (
+                <div key={`del-${s.name}`} className="cm-preview-item cm-preview-item-remove">
+                  <MinusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">删除状态</span>
+                    <span className="cm-preview-item-name" style={{ color: s.color }}>{s.name}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.statuses.modified.map((s) => (
+                <div key={`mod-${s.name}`} className="cm-preview-item cm-preview-item-modify">
+                  <Edit3 size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">修改状态</span>
+                    <span className="cm-preview-item-name">{s.name}</span>
+                    <div className="cm-preview-item-changes">
+                      {s.changes.map((c, i) => (
+                      <span key={i} className="cm-preview-change-tag">{c}</span>
+                    ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {hasFilterChanges && (
+            <div className="cm-preview-section">
+              <div className="cm-preview-section-title">
+                <Filter size={16} />
+                <span>筛选项</span>
+                <span className="cm-preview-section-count">
+                  {diff.filters.added.length + diff.filters.removed.length + diff.filters.modified.length} 项
+                </span>
+              </div>
+              <div className="cm-preview-list">
+                {diff.filters.added.map((f) => (
+                <div key={`add-${f.label}`} className="cm-preview-item cm-preview-item-add">
+                  <PlusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">新增筛选</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.filters.removed.map((f) => (
+                <div key={`del-${f.label}`} className="cm-preview-item cm-preview-item-remove">
+                  <MinusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">删除筛选</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <span className="cm-preview-item-type">{f.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.filters.modified.map((f) => (
+                <div key={`mod-${f.label}`} className="cm-preview-item cm-preview-item-modify">
+                  <Edit3 size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">修改筛选</span>
+                    <span className="cm-preview-item-name">{f.label}</span>
+                    <div className="cm-preview-item-changes">
+                      {f.changes.map((c, i) => (
+                      <span key={i} className="cm-preview-change-tag">{c}</span>
+                    ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {hasMetricChanges && (
+            <div className="cm-preview-section">
+              <div className="cm-preview-section-title">
+                <BarChart3 size={16} />
+                <span>统计卡片</span>
+                <span className="cm-preview-section-count">
+                  {diff.metrics.added.length + diff.metrics.removed.length + diff.metrics.modified.length} 项
+                </span>
+              </div>
+              <div className="cm-preview-list">
+                {diff.metrics.added.map((m) => (
+                <div key={`add-${m.label}`} className="cm-preview-item cm-preview-item-add">
+                  <PlusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">新增统计</span>
+                    <span className="cm-preview-item-name">{m.label}</span>
+                    <span className="cm-preview-item-type">{m.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.metrics.removed.map((m) => (
+                <div key={`del-${m.label}`} className="cm-preview-item cm-preview-item-remove">
+                  <MinusCircle size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">删除统计</span>
+                    <span className="cm-preview-item-name">{m.label}</span>
+                    <span className="cm-preview-item-type">{m.type}</span>
+                  </div>
+                </div>
+              ))}
+              {diff.metrics.modified.map((m) => (
+                <div key={`mod-${m.label}`} className="cm-preview-item cm-preview-item-modify">
+                  <Edit3 size={16} />
+                  <div className="cm-preview-item-content">
+                    <span className="cm-preview-item-label">修改统计</span>
+                    <span className="cm-preview-item-name">{m.label}</span>
+                    <div className="cm-preview-item-changes">
+                      {m.changes.map((c, i) => (
+                      <span key={i} className="cm-preview-change-tag">{c}</span>
+                    ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </div>
+            </div>
+          )}
+
+          {hasOtherChanges && (
+            <div className="cm-preview-section">
+              <div className="cm-preview-section-title">
+                <Settings size={16} />
+                <span>其他设置</span>
+                <span className="cm-preview-section-count">{diff.otherChanges.length} 项</span>
+              </div>
+              <div className="cm-preview-list">
+                {diff.otherChanges.map((item, i) => (
+                  <div key={i} className="cm-preview-item cm-preview-item-modify">
+                    <Edit3 size={16} />
+                    <div className="cm-preview-item-content">
+                      <span className="cm-preview-item-name">{item}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!diff.hasChanges && (
+            <div className="cm-preview-empty">
+            <CheckCircle size={32} />
+            <p>配置没有变更</p>
+          </div>
+          )}
+        </div>
+
+        <div className="cm-preview-footer">
+          <div className="cm-preview-hint">
+            <Info size={14} />
+            <span>确认保存后，配置将立即生效并刷新队列显示。</span>
+          </div>
+          <div className="cm-preview-actions">
+            <button className="cm-btn cm-btn-secondary" onClick={onCancel}>
+              返回修改
+            </button>
+            <button className="cm-btn cm-btn-primary" onClick={onConfirm}>
+              <Save size={14} />确认保存
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

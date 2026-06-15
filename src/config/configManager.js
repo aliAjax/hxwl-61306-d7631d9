@@ -607,3 +607,201 @@ export function buildCardMeta(config, item) {
     return '';
   }
 }
+
+export function diffConfig(oldConfig, newConfig) {
+  const result = {
+    hasChanges: false,
+    fields: { added: [], removed: [], modified: [] },
+    statuses: { added: [], removed: [], modified: [], renamed: [] },
+    metrics: { added: [], removed: [], modified: [] },
+    filters: { added: [], removed: [], modified: [] },
+    otherChanges: [],
+    requiresMigration: false,
+    migrationImpact: {
+      recordsAffected: '未知',
+      description: ''
+    }
+  };
+
+  if (!oldConfig || !newConfig) return result;
+
+  const oldFields = ensureArray(oldConfig.fields, []);
+  const newFields = ensureArray(newConfig.fields, []);
+  const oldFieldMap = new Map(oldFields.map((f) => [f.key, f]));
+  const newFieldMap = new Map(newFields.map((f) => [f.key, f]));
+  const oldFieldIds = new Set(oldFields.map((f) => f.id));
+  const newFieldIds = new Set(newFields.map((f) => f.id));
+
+  newFields.forEach((f) => {
+    if (!oldFieldIds.has(f.id)) {
+      result.fields.added.push({ key: f.key, label: f.label, type: f.type });
+    } else {
+      const old = oldFieldMap.get(f.key);
+      if (old) {
+        const changes = [];
+        if (old.label !== f.label) changes.push(`标签: "${old.label}" → "${f.label}"`);
+        if (old.type !== f.type) changes.push(`类型: ${old.type} → ${f.type}`);
+        if (old.required !== f.required) changes.push(`必填: ${old.required ? '是' : '否'} → ${f.required ? '是' : '否'}`);
+        if (old.searchable !== f.searchable) changes.push(`搜索: ${old.searchable ? '是' : '否'} → ${f.searchable ? '是' : '否'}`);
+        if (old.showInCard !== f.showInCard) changes.push(`卡片显示: ${old.showInCard ? '是' : '否'} → ${f.showInCard ? '是' : '否'}`);
+        if (old.sortable !== f.sortable) changes.push(`可排序: ${old.sortable ? '是' : '否'} → ${f.sortable ? '是' : '否'}`);
+        if (old.dateKey !== f.dateKey) changes.push(`时间字段: ${old.dateKey ? '是' : '否'} → ${f.dateKey ? '是' : '否'}`);
+        if (JSON.stringify(old.options || []) !== JSON.stringify(f.options || [])) changes.push('选项变更');
+        if (changes.length > 0) {
+          result.fields.modified.push({ key: f.key, label: f.label, changes });
+        }
+      }
+    }
+  });
+
+  oldFields.forEach((f) => {
+    if (!newFieldIds.has(f.id)) {
+      result.fields.removed.push({ key: f.key, label: f.label, type: f.type });
+    }
+  });
+
+  const oldStatuses = ensureArray(oldConfig.statuses, []);
+  const newStatuses = ensureArray(newConfig.statuses, []);
+  const oldStatusIds = new Set(oldStatuses.map((s) => s.id));
+  const newStatusIds = new Set(newStatuses.map((s) => s.id));
+  const oldStatusNameMap = new Map(oldStatuses.map((s) => [s.name, s]));
+
+  newStatuses.forEach((s) => {
+    if (!oldStatusIds.has(s.id)) {
+      result.statuses.added.push({ name: s.name, color: s.color });
+    } else {
+      const old = oldStatuses.find((os) => os.id === s.id);
+      if (old) {
+        const changes = [];
+        if (old.name !== s.name) {
+          changes.push(`名称: "${old.name}" → "${s.name}"`);
+          result.statuses.renamed.push({ oldName: old.name, newName: s.name });
+        }
+        if (old.color !== s.color) changes.push(`颜色: ${old.color} → ${s.color}`);
+        if (old.primary !== s.primary) changes.push(`初始状态: ${old.primary ? '是' : '否'} → ${s.primary ? '是' : '否'}`);
+        if (old.terminal !== s.terminal) changes.push(`终态: ${old.terminal ? '是' : '否'} → ${s.terminal ? '是' : '否'}`);
+        if (old.tatTrigger !== s.tatTrigger) changes.push(`TAT触发: ${old.tatTrigger ? '是' : '否'} → ${s.tatTrigger ? '是' : '否'}`);
+        if (changes.length > 0) {
+          result.statuses.modified.push({ name: s.name, changes });
+        }
+      }
+    }
+  });
+
+  oldStatuses.forEach((s) => {
+    if (!newStatusIds.has(s.id)) {
+      result.statuses.removed.push({ name: s.name, color: s.color });
+    }
+  });
+
+  const oldMetrics = ensureArray(oldConfig.metrics, []);
+  const newMetrics = ensureArray(newConfig.metrics, []);
+  const oldMetricIds = new Set(oldMetrics.map((m) => m.id));
+  const newMetricIds = new Set(newMetrics.map((m) => m.id));
+
+  newMetrics.forEach((m) => {
+    if (!oldMetricIds.has(m.id)) {
+      result.metrics.added.push({ label: m.label, type: m.type });
+    } else {
+      const old = oldMetrics.find((om) => om.id === m.id);
+      if (old) {
+        const changes = [];
+        if (old.label !== m.label) changes.push(`名称: "${old.label}" → "${m.label}"`);
+        if (old.type !== m.type) changes.push(`类型: ${old.type} → ${m.type}`);
+        if (old.enabled !== m.enabled) changes.push(`启用: ${old.enabled ? '是' : '否'} → ${m.enabled ? '是' : '否'}`);
+        if (old.field !== m.field) changes.push(`字段: ${old.field || '无'} → ${m.field || '无'}`);
+        if (JSON.stringify(old.filter || {}) !== JSON.stringify(m.filter || {})) changes.push('筛选条件变更');
+        if (changes.length > 0) {
+          result.metrics.modified.push({ label: m.label, changes });
+        }
+      }
+    }
+  });
+
+  oldMetrics.forEach((m) => {
+    if (!newMetricIds.has(m.id)) {
+      result.metrics.removed.push({ label: m.label, type: m.type });
+    }
+  });
+
+  const oldFilters = ensureArray(oldConfig.filters, []);
+  const newFilters = ensureArray(newConfig.filters, []);
+  const oldFilterIds = new Set(oldFilters.map((f) => f.id));
+  const newFilterIds = new Set(newFilters.map((f) => f.id));
+
+  newFilters.forEach((f) => {
+    if (!oldFilterIds.has(f.id)) {
+      result.filters.added.push({ label: f.label, type: f.type });
+    } else {
+      const old = oldFilters.find((of) => of.id === f.id);
+      if (old) {
+        const changes = [];
+        if (old.label !== f.label) changes.push(`名称: "${old.label}" → "${f.label}"`);
+        if (old.type !== f.type) changes.push(`类型: ${old.type} → ${f.type}`);
+        if (old.enabled !== f.enabled) changes.push(`启用: ${old.enabled ? '是' : '否'} → ${f.enabled ? '是' : '否'}`);
+        if (old.field !== f.field) changes.push(`字段: ${old.field || '无'} → ${f.field || '无'}`);
+        if (JSON.stringify(old.searchFields || []) !== JSON.stringify(f.searchFields || [])) changes.push('搜索字段变更');
+        if (changes.length > 0) {
+          result.filters.modified.push({ label: f.label, changes });
+        }
+      }
+    }
+  });
+
+  oldFilters.forEach((f) => {
+    if (!newFilterIds.has(f.id)) {
+      result.filters.removed.push({ label: f.label, type: f.type });
+    }
+  });
+
+  if (oldConfig.title !== newConfig.title) result.otherChanges.push('系统标题');
+  if (oldConfig.subtitle !== newConfig.subtitle) result.otherChanges.push('副标题');
+  if (oldConfig.accent !== newConfig.accent) result.otherChanges.push('主题色');
+  if (oldConfig.note !== newConfig.note) result.otherChanges.push('提示说明');
+  if (JSON.stringify(oldConfig.sortConfig || {}) !== JSON.stringify(newConfig.sortConfig || {})) result.otherChanges.push('排序配置');
+  if (JSON.stringify(oldConfig.priorityConfig || {}) !== JSON.stringify(newConfig.priorityConfig || {})) result.otherChanges.push('优先级配置');
+  if (JSON.stringify(oldConfig.cardDisplay || {}) !== JSON.stringify(newConfig.cardDisplay || {})) result.otherChanges.push('卡片显示配置');
+  if (JSON.stringify(oldConfig.businessRules || {}) !== JSON.stringify(newConfig.businessRules || {})) result.otherChanges.push('业务规则配置');
+  if (JSON.stringify(oldConfig.defaultValues || {}) !== JSON.stringify(newConfig.defaultValues || {})) result.otherChanges.push('默认值配置');
+  if (JSON.stringify(oldConfig.batchImport || {}) !== JSON.stringify(newConfig.batchImport || {})) result.otherChanges.push('批量导入配置');
+
+  result.hasChanges =
+    result.fields.added.length > 0 ||
+    result.fields.removed.length > 0 ||
+    result.fields.modified.length > 0 ||
+    result.statuses.added.length > 0 ||
+    result.statuses.removed.length > 0 ||
+    result.statuses.modified.length > 0 ||
+    result.metrics.added.length > 0 ||
+    result.metrics.removed.length > 0 ||
+    result.metrics.modified.length > 0 ||
+    result.filters.added.length > 0 ||
+    result.filters.removed.length > 0 ||
+    result.filters.modified.length > 0 ||
+    result.otherChanges.length > 0;
+
+  result.requiresMigration =
+    result.fields.removed.length > 0 ||
+    result.statuses.removed.length > 0 ||
+    result.statuses.renamed.length > 0 ||
+    result.fields.added.length > 0;
+
+  if (result.requiresMigration) {
+    const impacts = [];
+    if (result.fields.removed.length > 0) {
+      impacts.push(`删除 ${result.fields.removed.length} 个字段，相关病例数据将保留但不再显示`);
+    }
+    if (result.fields.added.length > 0) {
+      impacts.push(`新增 ${result.fields.added.length} 个字段，历史病例将填充默认值`);
+    }
+    if (result.statuses.removed.length > 0) {
+      impacts.push(`删除 ${result.statuses.removed.length} 个状态，相关病例将重置为初始状态`);
+    }
+    if (result.statuses.renamed.length > 0) {
+      impacts.push(`重命名 ${result.statuses.renamed.length} 个状态，相关病例状态将同步更新`);
+    }
+    result.migrationImpact.description = impacts.join('；');
+  }
+
+  return result;
+}
