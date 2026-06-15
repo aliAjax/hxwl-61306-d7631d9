@@ -444,6 +444,7 @@ textarea { min-height: 76px; resize: vertical; }
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
 .field-mapping-header h3 {
@@ -457,6 +458,59 @@ textarea { min-height: 76px; resize: vertical; }
   font-size: 12px;
   color: #667085;
   margin-left: auto;
+}
+
+.field-mapping-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.detection-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.detection-badge.has-header {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.detection-badge.no-header {
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+}
+
+.mapping-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  background: #ffffff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #344054;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.mapping-action-btn:hover {
+  background: #f9fafb;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mapping-action-btn:active {
+  background: #f2f4f7;
+  transform: translateY(0.5px);
 }
 
 .field-mapping-grid {

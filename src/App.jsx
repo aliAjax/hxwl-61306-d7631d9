@@ -923,6 +923,7 @@ function App() {
   const [batchColumns, setBatchColumns] = useState([]);
   const [fieldMapping, setFieldMapping] = useState({});
   const [tempDefaultValues, setTempDefaultValues] = useState({});
+  const [detectedHeader, setDetectedHeader] = useState(false);
   const [tick, setTick] = useState(0);
   const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
   const [reviewEditing, setReviewEditing] = useState(false);
@@ -1160,17 +1161,80 @@ function App() {
   const HEADER_KEYWORDS = queueConfig.batchImport?.headerKeywords ||
     queueConfig.fields.flatMap((f) => [f.label, f.key.toLowerCase()]);
 
-  function parseRawColumns(raw) {
-    const lines = raw.split('\n').map((l) => l.trimEnd()).filter(Boolean);
-    if (!lines.length) return { columns: [], data: [] };
+  function looksLikeDataCell(value, field) {
+    const v = (value || '').trim();
+    if (!v) return false;
+    if (field.type === 'datetime-local' || field.type === 'date') {
+      return /\d{4}[-/:]\d{1,2}[-/:]\d{1,2}/.test(v) || /\d{1,2}[-/月]\d{1,2}[-/日]/.test(v);
+    }
+    if (field.key === 'caseNo' || field.label.includes('病例') || field.label.includes('编号')) {
+      return /^[A-Za-z0-9\-]+$/.test(v) && v.length >= 4;
+    }
+    if (field.type === 'select' && field.options?.length) {
+      return field.options.some((opt) => v === opt || v.includes(opt));
+    }
+    return true;
+  }
 
-    let startIndex = 0;
+  function detectHeader(lines) {
+    if (!lines.length) return { hasHeader: false, matchScore: 0 };
+    const firstLine = lines[0];
+    const firstParts = firstLine.split('\t').map((p) => p.trim());
+    const partCount = firstParts.length;
+
+    const secondLine = lines[1] || '';
+    const secondParts = secondLine.split('\t').map((p) => p.trim());
+
+    const fieldLabels = BATCH_FIELDS.map((f) => ({
+      key: f.key,
+      labels: new Set([
+        f.label.toLowerCase(),
+        f.key.toLowerCase(),
+        ...(HEADER_KEYWORDS || []).map((k) => String(k).toLowerCase())
+      ])
+    }));
+
+    let exactHeaderMatches = 0;
+    firstParts.forEach((part) => {
+      const p = part.toLowerCase();
+      if (!p) return;
+      const isLabel = fieldLabels.some((f) =>
+        Array.from(f.labels).some((label) =>
+          label === p || p === label || (p.length >= 2 && label.includes(p))
+        )
+      );
+      if (isLabel) exactHeaderMatches++;
+    });
+
+    let exactDataMatches = 0;
+    secondParts.forEach((part, idx) => {
+      const field = BATCH_FIELDS[idx];
+      if (!field) return;
+      if (looksLikeDataCell(part, field)) exactDataMatches++;
+    });
+
+    const headerMatchRatio = exactHeaderMatches / Math.max(partCount, 1);
+    const dataMatchRatio = exactDataMatches / Math.max(secondParts.length, 1);
+
     let hasHeader = false;
-    const firstLine = lines[0].toLowerCase();
-    if (HEADER_KEYWORDS.some((kw) => firstLine.includes(String(kw).toLowerCase()))) {
-      startIndex = 1;
+    if (exactHeaderMatches >= Math.min(2, partCount) && headerMatchRatio >= 0.5) {
+      if (dataMatchRatio < 0.5 || exactHeaderMatches > exactDataMatches) {
+        hasHeader = true;
+      }
+    }
+    if (partCount <= 2 && exactHeaderMatches >= 1 && dataMatchRatio < 0.5) {
       hasHeader = true;
     }
+
+    return { hasHeader, matchScore: exactHeaderMatches };
+  }
+
+  function parseRawColumns(raw) {
+    const lines = raw.split('\n').map((l) => l.trimEnd()).filter(Boolean);
+    if (!lines.length) return { columns: [], data: [], hasHeader: false };
+
+    const { hasHeader } = detectHeader(lines);
+    let startIndex = hasHeader ? 1 : 0;
 
     const firstDataLine = lines[startIndex] || '';
     const firstParts = firstDataLine.split('\t');
@@ -1188,9 +1252,10 @@ function App() {
       }
     } else {
       for (let i = 0; i < columnCount; i++) {
+        const fieldAtPos = BATCH_FIELDS[i];
         columns.push({
           index: i,
-          name: `列${i + 1}`,
+          name: fieldAtPos ? `${fieldAtPos.label} (列${i + 1})` : `列${i + 1}`,
           originalName: `列${i + 1}`
         });
       }
@@ -1210,17 +1275,27 @@ function App() {
       data.push(row);
     }
 
-    return { columns, data };
+    return { columns, data, hasHeader };
   }
 
-  function guessFieldMapping(columns) {
+  function guessFieldMapping(columns, hasHeader) {
     const mapping = {};
     const configFields = [...BATCH_FIELDS];
     const usedFieldKeys = new Set();
 
+    if (!hasHeader) {
+      columns.forEach((col, idx) => {
+        const field = configFields[idx];
+        mapping[col.index] = field ? field.key : null;
+        if (field) usedFieldKeys.add(field.key);
+      });
+      return mapping;
+    }
+
     columns.forEach((col) => {
       const colName = col.name.toLowerCase();
       let matched = null;
+      let bestScore = 0;
 
       for (const field of configFields) {
         if (usedFieldKeys.has(field.key)) continue;
@@ -1229,13 +1304,22 @@ function App() {
           field.key.toLowerCase(),
           ...(HEADER_KEYWORDS || []).map((k) => String(k).toLowerCase())
         ];
-        if (fieldLabels.includes(colName) || colName.includes(field.label.toLowerCase()) || colName.includes(field.key.toLowerCase())) {
+
+        let score = 0;
+        for (const label of fieldLabels) {
+          if (!label) continue;
+          if (colName === label) { score = 100; break; }
+          if (colName.includes(label) && label.length >= 2) { score = Math.max(score, 50 + label.length); }
+          if (label.includes(colName) && colName.length >= 2) { score = Math.max(score, 30 + colName.length); }
+        }
+
+        if (score > bestScore && score >= 30) {
+          bestScore = score;
           matched = field.key;
-          usedFieldKeys.add(field.key);
-          break;
         }
       }
 
+      if (matched) usedFieldKeys.add(matched);
       mapping[col.index] = matched || null;
     });
 
@@ -1291,8 +1375,18 @@ function App() {
     });
   }
 
+  function fallbackOrderMapping(columns) {
+    const mapping = {};
+    columns.forEach((col, idx) => {
+      const field = BATCH_FIELDS[idx];
+      mapping[col.index] = field ? field.key : null;
+    });
+    return mapping;
+  }
+
   function handleBatchParse() {
-    const { columns, data } = parseRawColumns(batchRaw);
+    const { columns, data, hasHeader } = parseRawColumns(batchRaw);
+    setDetectedHeader(hasHeader);
     if (!columns.length || !data.length) {
       setBatchParsed([]);
       setRawParsed([]);
@@ -1302,7 +1396,23 @@ function App() {
       return;
     }
 
-    const initialMapping = guessFieldMapping(columns);
+    let initialMapping = guessFieldMapping(columns, hasHeader);
+
+    if (hasHeader) {
+      const mappedCount = Object.values(initialMapping).filter((v) => v && v !== '__ignore__').length;
+      const totalRequired = BATCH_FIELDS.filter((f) => f.required).length;
+      const requiredMapped = BATCH_FIELDS.filter((f) => f.required && Object.values(initialMapping).includes(f.key)).length;
+      const mappedRatio = mappedCount / Math.max(columns.length, 1);
+
+      if (mappedRatio < 0.4 || (totalRequired > 0 && requiredMapped < totalRequired)) {
+        const orderMapping = fallbackOrderMapping(columns);
+        const orderMappedCount = Object.values(orderMapping).filter((v) => v && v !== '__ignore__').length;
+        if (orderMappedCount >= mappedCount) {
+          initialMapping = orderMapping;
+        }
+      }
+    }
+
     const initialDefaults = {};
     BATCH_FIELDS.forEach((f) => {
       if (queueConfig.defaultValues && queueConfig.defaultValues[f.key] !== undefined) {
@@ -1368,6 +1478,7 @@ function App() {
     setBatchColumns([]);
     setFieldMapping({});
     setTempDefaultValues({});
+    setDetectedHeader(false);
   }
 
   function handleBatchClose() {
@@ -1378,6 +1489,7 @@ function App() {
     setBatchColumns([]);
     setFieldMapping({});
     setTempDefaultValues({});
+    setDetectedHeader(false);
   }
 
   function toggleCaseSelection(caseId) {
@@ -5894,6 +6006,38 @@ function App() {
                       <div className="field-mapping-header">
                         <ArrowRightLeft size={16} />
                         <h3>字段映射调整</h3>
+                        <div className="field-mapping-actions">
+                          <span className={`detection-badge ${detectedHeader ? 'has-header' : 'no-header'}`}>
+                            {detectedHeader ? '✓ 检测到表头' : '按位置顺序映射'}
+                          </span>
+                          <button
+                            type="button"
+                            className="mapping-action-btn"
+                            onClick={() => {
+                              const orderMap = fallbackOrderMapping(batchColumns);
+                              setFieldMapping(orderMap);
+                              const parsed = applyFieldMapping(rawParsed, batchColumns, orderMap, tempDefaultValues);
+                              setBatchParsed(parsed);
+                            }}
+                            title="按列顺序依次映射到配置字段"
+                          >
+                            <Layers size={13} />顺序映射
+                          </button>
+                          <button
+                            type="button"
+                            className="mapping-action-btn"
+                            onClick={() => {
+                              const hasHeader = batchColumns.some((c) => c.originalName !== `列${c.index + 1}`);
+                              const smartMap = guessFieldMapping(batchColumns, hasHeader);
+                              setFieldMapping(smartMap);
+                              const parsed = applyFieldMapping(rawParsed, batchColumns, smartMap, tempDefaultValues);
+                              setBatchParsed(parsed);
+                            }}
+                            title="根据列名智能匹配字段"
+                          >
+                            <Zap size={13} />智能映射
+                          </button>
+                        </div>
                         <span className="hint">将原始列映射到目标字段，可忽略不需要的列或设置默认值</span>
                       </div>
                       <div className="field-mapping-grid">
