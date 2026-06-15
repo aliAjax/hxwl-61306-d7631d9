@@ -327,7 +327,7 @@ function hasRecentEscalation(caseId, caseNo, escalateTarget, notifies, windowMin
     if (!caseMatch) return false;
     if (n.notifyTarget !== escalateTarget) return false;
     if (!n.isEscalation) return false;
-    const escalateTime = new Date(n.sentAt || n.createdAt).getTime();
+    const escalateTime = new Date(n.createdAt || n.sentAt).getTime();
     return now - escalateTime < windowMs;
   });
 }
@@ -363,6 +363,16 @@ function formatDateTime(dateStr) {
   } catch {
     return dateStr;
   }
+}
+
+function formatDateTimeInput(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
 }
 
 const today = new Date().toISOString().slice(0, 10);
@@ -1750,7 +1760,7 @@ function App() {
     const initialForm = {
       escalateTarget: '科室主任',
       notifyMethod: '电话',
-      sentAt: new Date().toISOString().slice(0, 16),
+      sentAt: formatDateTimeInput(),
       remark: `原通知对象「${notifyItem.notifyTarget}」未在规定时间内确认，已升级通知。`
     };
     setEscalateSourceNotify(notifyItem);
