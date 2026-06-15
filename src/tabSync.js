@@ -146,7 +146,143 @@ export function mergeCaseRecord(localRecord, externalRecord) {
   return result;
 }
 
-export function mergeRecordLists(localRecords, externalRecords, baseRecords = []) {
+export function mergeBorrowRecord(localRecord, externalRecord) {
+  if (!localRecord) return { ...externalRecord };
+  if (!externalRecord) return { ...localRecord };
+
+  const localTimeline = localRecord.timeline || [];
+  const externalTimeline = externalRecord.timeline || [];
+
+  const localModifiedAt = localRecord.updatedAt || localRecord.createdAt || localRecord.borrowTime || '';
+  const externalModifiedAt = externalRecord.updatedAt || externalRecord.createdAt || externalRecord.borrowTime || '';
+  const localTime = new Date(localModifiedAt).getTime();
+  const externalTime = new Date(externalModifiedAt).getTime();
+  const latestTime = Math.max(localTime, externalTime);
+
+  const mergedTimeline = mergeTimelines(localTimeline, externalTimeline);
+
+  const scalarFields = [
+    'caseNo', 'borrower', 'department', 'borrowTime',
+    'receiveTime', 'expectedReturnTime', 'actualReturnTime',
+    'status', 'remark'
+  ];
+  const result = { ...externalRecord };
+
+  for (const field of scalarFields) {
+    const localVal = localRecord[field];
+    const extVal = externalRecord[field];
+    if (localVal && extVal && localVal !== extVal) {
+      result[field] = localTime >= externalTime ? localVal : extVal;
+    } else if (localVal && !extVal) {
+      result[field] = localVal;
+    } else if (!localVal && extVal) {
+      result[field] = extVal;
+    }
+  }
+
+  const localCreatedAt = localRecord.createdAt || localRecord.borrowTime || '';
+  const externalCreatedAt = externalRecord.createdAt || externalRecord.borrowTime || '';
+  result.createdAt = localCreatedAt || externalCreatedAt;
+
+  result.updatedAt = new Date(latestTime).toISOString();
+  result.timeline = mergedTimeline;
+
+  if (result.actualReturnTime) {
+    result.status = '已归还';
+  } else if (result.receiveTime) {
+    result.status = '已接收';
+  } else {
+    result.status = '已借出';
+  }
+
+  return result;
+}
+
+export function mergeNotifyRecord(localRecord, externalRecord) {
+  if (!localRecord) return { ...externalRecord };
+  if (!externalRecord) return { ...localRecord };
+
+  const localModifiedAt = localRecord.updatedAt || localRecord.confirmedAt || localRecord.createdAt || localRecord.sentAt || '';
+  const externalModifiedAt = externalRecord.updatedAt || externalRecord.confirmedAt || externalRecord.createdAt || externalRecord.sentAt || '';
+  const localTime = new Date(localModifiedAt).getTime();
+  const externalTime = new Date(externalModifiedAt).getTime();
+  const latestTime = Math.max(localTime, externalTime);
+
+  const scalarFields = [
+    'caseId', 'caseNo', 'notifyTarget', 'notifyMethod',
+    'sentAt', 'confirmedAt', 'confirmedBy', 'remark',
+    'triggerReason', 'priority', 'status',
+    'isEscalation', 'parentNotifyId'
+  ];
+  const result = { ...externalRecord };
+
+  for (const field of scalarFields) {
+    const localVal = localRecord[field];
+    const extVal = externalRecord[field];
+    if (localVal && extVal && localVal !== extVal) {
+      result[field] = localTime >= externalTime ? localVal : extVal;
+    } else if (localVal && !extVal) {
+      result[field] = localVal;
+    } else if (!localVal && extVal) {
+      result[field] = extVal;
+    }
+  }
+
+  const localCreatedAt = localRecord.createdAt || localRecord.sentAt || '';
+  const externalCreatedAt = externalRecord.createdAt || externalRecord.sentAt || '';
+  result.createdAt = localCreatedAt || externalCreatedAt;
+
+  result.updatedAt = new Date(latestTime).toISOString();
+
+  if (result.confirmedAt) {
+    result.status = '已确认';
+  }
+
+  return result;
+}
+
+export function mergePhraseRecord(localRecord, externalRecord) {
+  if (!localRecord) return { ...externalRecord };
+  if (!externalRecord) return { ...localRecord };
+
+  const localModifiedAt = localRecord.updatedAt || localRecord.lastUsedAt || localRecord.pinnedAt || localRecord.createdAt || '';
+  const externalModifiedAt = externalRecord.updatedAt || externalRecord.lastUsedAt || externalRecord.pinnedAt || externalRecord.createdAt || '';
+  const localTime = new Date(localModifiedAt).getTime();
+  const externalTime = new Date(externalModifiedAt).getTime();
+  const latestTime = Math.max(localTime, externalTime);
+
+  const scalarFields = ['phrase', 'sampleType', 'pinned', 'pinnedAt', 'lastUsedAt'];
+  const result = { ...externalRecord };
+
+  for (const field of scalarFields) {
+    const localVal = localRecord[field];
+    const extVal = externalRecord[field];
+    if (localVal && extVal && localVal !== extVal) {
+      result[field] = localTime >= externalTime ? localVal : extVal;
+    } else if (localVal && !extVal) {
+      result[field] = localVal;
+    } else if (!localVal && extVal) {
+      result[field] = extVal;
+    }
+  }
+
+  result.useCount = Math.max(
+    Number(localRecord.useCount) || 0,
+    Number(externalRecord.useCount) || 0
+  );
+
+  const localCreatedAt = localRecord.createdAt || '';
+  const externalCreatedAt = externalRecord.createdAt || '';
+  result.createdAt = localCreatedAt || externalCreatedAt;
+
+  result.updatedAt = new Date(latestTime).toISOString();
+
+  return result;
+}
+
+export function mergeRecordLists(localRecords, externalRecords, baseRecords = [], options = {}) {
+  const { mergeRecordFn = mergeCaseRecord, sortField = 'sentAt' } = options;
+
   const localMap = computeRecordMap(localRecords);
   const externalMap = computeRecordMap(externalRecords);
   const baseMap = computeRecordMap(baseRecords);
@@ -185,7 +321,7 @@ export function mergeRecordLists(localRecords, externalRecords, baseRecords = []
         const baseStr = JSON.stringify(base);
         const extStr = JSON.stringify(ext);
         if (baseStr !== extStr) {
-          merged.push(mergeCaseRecord(null, ext));
+          merged.push(mergeRecordFn(null, ext));
           continue;
         }
       }
@@ -197,7 +333,7 @@ export function mergeRecordLists(localRecords, externalRecords, baseRecords = []
         const baseStr = JSON.stringify(base);
         const localStr = JSON.stringify(local);
         if (baseStr !== localStr) {
-          merged.push(mergeCaseRecord(local, null));
+          merged.push(mergeRecordFn(local, null));
           continue;
         }
       }
@@ -205,7 +341,7 @@ export function mergeRecordLists(localRecords, externalRecords, baseRecords = []
     }
 
     if (local && ext) {
-      merged.push(mergeCaseRecord(local, ext));
+      merged.push(mergeRecordFn(local, ext));
     } else if (local) {
       merged.push({ ...local });
     } else if (ext) {
@@ -229,15 +365,17 @@ export function mergeRecordLists(localRecords, externalRecords, baseRecords = []
 
     if (aMin !== bMin) return aMin - bMin;
 
-    const aTime = a.sentAt || a.createdAt || '';
-    const bTime = b.sentAt || b.createdAt || '';
+    const aTime = a[sortField] || a.createdAt || '';
+    const bTime = b[sortField] || b.createdAt || '';
     return String(bTime).localeCompare(String(aTime));
   });
 
   return merged;
 }
 
-export function detectConflicts(localRecords, externalRecords, baseRecords) {
+export function detectConflicts(localRecords, externalRecords, baseRecords, options = {}) {
+  const { getDisplayLabel = (r) => r.caseNo || r.id } = options;
+
   const baseMap = computeRecordMap(baseRecords);
   const localMap = computeRecordMap(localRecords);
   const externalMap = computeRecordMap(externalRecords);
@@ -285,7 +423,7 @@ export function detectConflicts(localRecords, externalRecords, baseRecords) {
     if (!local && ext) {
       conflicts.push({
         id,
-        caseNo: ext.caseNo,
+        displayLabel: getDisplayLabel(ext),
         type: 'delete-vs-modify',
         localRecord: null,
         externalRecord: ext,
@@ -294,7 +432,7 @@ export function detectConflicts(localRecords, externalRecords, baseRecords) {
     } else if (local && !ext) {
       conflicts.push({
         id,
-        caseNo: local.caseNo,
+        displayLabel: getDisplayLabel(local),
         type: 'modify-vs-delete',
         localRecord: local,
         externalRecord: null,
@@ -303,7 +441,7 @@ export function detectConflicts(localRecords, externalRecords, baseRecords) {
     } else if (local && ext) {
       conflicts.push({
         id,
-        caseNo: local.caseNo,
+        displayLabel: getDisplayLabel(local),
         type: 'modify-vs-modify',
         localRecord: local,
         externalRecord: ext,
@@ -331,14 +469,14 @@ export function detectConflicts(localRecords, externalRecords, baseRecords) {
   };
 }
 
-export function resolveConflict(strategy, localRecords, externalRecords, baseRecords) {
+export function resolveConflict(strategy, localRecords, externalRecords, baseRecords, options = {}) {
   switch (strategy) {
     case 'keep-local':
       return localRecords;
     case 'adopt-latest':
       return externalRecords;
     case 'merge':
-      return mergeRecordLists(localRecords, externalRecords, baseRecords);
+      return mergeRecordLists(localRecords, externalRecords, baseRecords, options);
     default:
       return localRecords;
   }
@@ -351,6 +489,8 @@ export class TabSync {
     this.onExternalUpdate = options.onExternalUpdate || (() => {});
     this.onConflict = options.onConflict || (() => {});
     this.onTabListChange = options.onTabListChange || (() => {});
+    this.mergeOptions = options.mergeOptions || {};
+    this.conflictOptions = options.conflictOptions || {};
     this.baseSnapshot = [];
     this.currentRecords = [];
     this.hasLocalMutations = false;
@@ -429,7 +569,7 @@ export class TabSync {
     const currentRecords = this.currentRecords;
     const baseRecords = this.baseSnapshot;
 
-    const conflictInfo = detectConflicts(currentRecords, externalRecords, baseRecords);
+    const conflictInfo = detectConflicts(currentRecords, externalRecords, baseRecords, this.conflictOptions);
     conflictInfo.externalRecords = externalRecords;
     conflictInfo.localRecords = currentRecords;
     conflictInfo.baseRecords = baseRecords;
@@ -504,7 +644,8 @@ export class TabSync {
       strategy,
       this.currentRecords,
       externalRecords,
-      this.baseSnapshot
+      this.baseSnapshot,
+      this.mergeOptions
     );
     this._updateBaseSnapshot(resolved);
     localStorage.setItem(this.storageKey, JSON.stringify(resolved));

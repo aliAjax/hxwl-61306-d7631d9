@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown, ArrowUpCircle } from 'lucide-react';
-import { TabSync } from './tabSync';
+import {
+  TabSync,
+  mergeBorrowRecord,
+  mergeNotifyRecord,
+  mergePhraseRecord
+} from './tabSync';
 import { ConfigManager } from './components/ConfigManager';
 import {
   loadConfig,
@@ -907,9 +912,13 @@ function App() {
   const [showConfigManager, setShowConfigManager] = useState(false);
   const [records, setRecords] = useState(() => loadRecords(INITIAL_CONFIG));
   const tabSyncRef = useRef(null);
+  const borrowSyncRef = useRef(null);
+  const notifySyncRef = useRef(null);
+  const phraseSyncRef = useRef(null);
   const [activeTabCount, setActiveTabCount] = useState(1);
   const [conflictInfo, setConflictInfo] = useState(null);
   const [showConflictModal, setShowConflictModal] = useState(false);
+  const [conflictModule, setConflictModule] = useState('queue');
   const [form, setForm] = useState({
     ...INITIAL_CONFIG.defaultValues,
     status: getPrimaryStatusName(INITIAL_CONFIG)
@@ -1028,6 +1037,7 @@ function App() {
         });
       },
       onConflict: (conflictData) => {
+        setConflictModule('queue');
         setConflictInfo(conflictData);
         setShowConflictModal(true);
       },
@@ -1042,6 +1052,97 @@ function App() {
       tabSync.destroy();
     };
   }, [queueConfig]);
+
+  useEffect(() => {
+    const initialBorrows = loadSlideBorrows();
+    const borrowSync = new TabSync(SLIDE_BORROW_STORAGE, {
+      mergeOptions: {
+        mergeRecordFn: mergeBorrowRecord,
+        sortField: 'borrowTime'
+      },
+      conflictOptions: {
+        getDisplayLabel: (r) => r.caseNo || r.id
+      },
+      onExternalUpdate: (externalRecords) => {
+        setSlideBorrows(externalRecords);
+        setSelectedBorrowForDetail((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
+      },
+      onConflict: (conflictData) => {
+        setConflictModule('borrow');
+        setConflictInfo(conflictData);
+        setShowConflictModal(true);
+      }
+    });
+    borrowSync.init(initialBorrows);
+    borrowSyncRef.current = borrowSync;
+
+    return () => {
+      borrowSync.destroy();
+    };
+  }, []);
+
+  useEffect(() => {
+    const initialNotifies = loadCriticalNotifies();
+    const notifySync = new TabSync(CRITICAL_NOTIFY_STORAGE, {
+      mergeOptions: {
+        mergeRecordFn: mergeNotifyRecord,
+        sortField: 'sentAt'
+      },
+      conflictOptions: {
+        getDisplayLabel: (r) => `${r.caseNo} - ${r.notifyTarget}`
+      },
+      onExternalUpdate: (externalRecords) => {
+        setCriticalNotifies(externalRecords);
+        setSelectedNotifyForDetail((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
+      },
+      onConflict: (conflictData) => {
+        setConflictModule('notify');
+        setConflictInfo(conflictData);
+        setShowConflictModal(true);
+      }
+    });
+    notifySync.init(initialNotifies);
+    notifySyncRef.current = notifySync;
+
+    return () => {
+      notifySync.destroy();
+    };
+  }, []);
+
+  useEffect(() => {
+    const initialPhrases = loadPhrases();
+    const phraseSync = new TabSync(PHRASE_LIBRARY_STORAGE, {
+      mergeOptions: {
+        mergeRecordFn: mergePhraseRecord,
+        sortField: 'createdAt'
+      },
+      conflictOptions: {
+        getDisplayLabel: (r) => (r.phrase || '').slice(0, 30) + '...'
+      },
+      onExternalUpdate: (externalRecords) => {
+        setPhrases(externalRecords);
+      },
+      onConflict: (conflictData) => {
+        setConflictModule('phrase');
+        setConflictInfo(conflictData);
+        setShowConflictModal(true);
+      }
+    });
+    phraseSync.init(initialPhrases);
+    phraseSyncRef.current = phraseSync;
+
+    return () => {
+      phraseSync.destroy();
+    };
+  }, []);
 
   useEffect(() => {
     setFilters(buildInitialFiltersState(queueConfig));
@@ -1662,30 +1763,80 @@ function App() {
 
   function persistBorrows(next) {
     setSlideBorrows(next);
-    localStorage.setItem(SLIDE_BORROW_STORAGE, JSON.stringify(next));
+    if (borrowSyncRef.current) {
+      borrowSyncRef.current.persist(next);
+    } else {
+      localStorage.setItem(SLIDE_BORROW_STORAGE, JSON.stringify(next));
+    }
   }
 
   function persistCriticalNotifies(next) {
     setCriticalNotifies(next);
-    persistNotifies(next);
+    if (notifySyncRef.current) {
+      notifySyncRef.current.persist(next);
+    } else {
+      persistNotifies(next);
+    }
   }
 
   function handleConflictResolve(strategy) {
-    if (!conflictInfo || !tabSyncRef.current) return;
-    const resolved = tabSyncRef.current.resolve(strategy);
-    setRecords(resolved);
-    setSelected((prevSelected) => {
-      if (!prevSelected) return null;
-      const updatedSelected = resolved.find((r) => r.id === prevSelected.id);
-      return updatedSelected || null;
-    });
+    if (!conflictInfo) return;
+
+    let resolved = null;
+    const syncRef = {
+      queue: tabSyncRef,
+      borrow: borrowSyncRef,
+      notify: notifySyncRef,
+      phrase: phraseSyncRef
+    }[conflictModule];
+
+    if (!syncRef?.current) return;
+
+    resolved = syncRef.current.resolve(strategy);
+
+    switch (conflictModule) {
+      case 'queue':
+        setRecords(resolved);
+        setSelected((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = resolved.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
+        break;
+      case 'borrow':
+        setSlideBorrows(resolved);
+        setSelectedBorrowForDetail((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = resolved.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
+        break;
+      case 'notify':
+        setCriticalNotifies(resolved);
+        setSelectedNotifyForDetail((prevSelected) => {
+          if (!prevSelected) return null;
+          const updatedSelected = resolved.find((r) => r.id === prevSelected.id);
+          return updatedSelected || null;
+        });
+        break;
+      case 'phrase':
+        setPhrases(resolved);
+        break;
+      default:
+        break;
+    }
+
     setConflictInfo(null);
     setShowConflictModal(false);
   }
 
   function handlePhrasesPersist(next) {
     setPhrases(next);
-    persistPhrases(next);
+    if (phraseSyncRef.current) {
+      phraseSyncRef.current.persist(next);
+    } else {
+      persistPhrases(next);
+    }
   }
 
   function openPhraseModal(item = null) {
@@ -5843,7 +5994,12 @@ function App() {
               <div className="conflict-alert">
                 <AlertTriangle size={20} />
                 <div>
-                  <strong>检测到其他标签页对阅片队列进行了修改</strong>
+                  <strong>
+                    {conflictModule === 'queue' && '检测到其他标签页对阅片队列进行了修改'}
+                    {conflictModule === 'borrow' && '检测到其他标签页对玻片借阅记录进行了修改'}
+                    {conflictModule === 'notify' && '检测到其他标签页对危急值通知进行了修改'}
+                    {conflictModule === 'phrase' && '检测到其他标签页对诊断短语库进行了修改'}
+                  </strong>
                   <p>本页数据与外部更新存在冲突，请选择处理方式。</p>
                 </div>
               </div>
@@ -5851,7 +6007,12 @@ function App() {
               <div className="conflict-summary">
                 <div className="conflict-stat conflict-stat-danger">
                   <span className="conflict-stat-value">{conflictInfo.conflicts.length}</span>
-                  <span className="conflict-stat-label">冲突病例</span>
+                  <span className="conflict-stat-label">
+                    {conflictModule === 'queue' && '冲突病例'}
+                    {conflictModule === 'borrow' && '冲突记录'}
+                    {conflictModule === 'notify' && '冲突通知'}
+                    {conflictModule === 'phrase' && '冲突短语'}
+                  </span>
                 </div>
                 <div className="conflict-stat">
                   <span className="conflict-stat-value">{conflictInfo.localOnlyAdditions.length}</span>
@@ -5875,12 +6036,15 @@ function App() {
                 <div className="conflict-details">
                   <div className="conflict-details-title">
                     <AlertTriangle size={14} />
-                    冲突病例详情
+                    {conflictModule === 'queue' && '冲突病例详情'}
+                    {conflictModule === 'borrow' && '冲突借阅记录详情'}
+                    {conflictModule === 'notify' && '冲突通知详情'}
+                    {conflictModule === 'phrase' && '冲突短语详情'}
                   </div>
                   {conflictInfo.conflicts.map((c) => (
                     <div key={c.id} className="conflict-case-item">
                       <div className="conflict-case-header">
-                        <span className="conflict-case-no">{c.caseNo}</span>
+                        <span className="conflict-case-no">{c.displayLabel || c.id}</span>
                         <span className={`conflict-type-badge conflict-type-${c.type}`}>
                           {c.type === 'modify-vs-modify' && '双方修改'}
                           {c.type === 'modify-vs-delete' && '本页修改/外部删除'}
@@ -5892,26 +6056,108 @@ function App() {
                           <div className="conflict-case-side conflict-side-local">
                             <div className="conflict-side-label">本页版本</div>
                             <div className="conflict-side-content">
-                              <span className={'status ' + statusClass(queueConfig, c.localRecord.status)}>{c.localRecord.status}</span>
-                              <span>{c.localRecord.doctor}</span>
-                              <span>{c.localRecord.priority}</span>
-                              {(c.localRecord.reviews || []).length > 0 && (
-                                <span className="conflict-review-count">
-                                  <ShieldCheck size={11} />{(c.localRecord.reviews || []).length}条复核
-                                </span>
+                              {conflictModule === 'queue' && (
+                                <>
+                                  <span className={'status ' + statusClass(queueConfig, c.localRecord.status)}>{c.localRecord.status}</span>
+                                  <span>{c.localRecord.doctor}</span>
+                                  <span>{c.localRecord.priority}</span>
+                                  {(c.localRecord.reviews || []).length > 0 && (
+                                    <span className="conflict-review-count">
+                                      <ShieldCheck size={11} />{(c.localRecord.reviews || []).length}条复核
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'borrow' && (
+                                <>
+                                  <span className={'status ' + borrowStatusClass(c.localRecord.status)}>{c.localRecord.status}</span>
+                                  <span>{c.localRecord.borrower}</span>
+                                  <span>{c.localRecord.department}</span>
+                                  {(c.localRecord.timeline || []).length > 0 && (
+                                    <span className="conflict-review-count">
+                                      <Clock size={11} />{(c.localRecord.timeline || []).length}条记录
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'notify' && (
+                                <>
+                                  <span className={'status ' + notifyStatusClass(calcNotifyStatus(c.localRecord))}>
+                                    {calcNotifyStatus(c.localRecord)}
+                                  </span>
+                                  <span>{c.localRecord.notifyTarget}</span>
+                                  <span>{c.localRecord.notifyMethod}</span>
+                                  {c.localRecord.confirmedAt && (
+                                    <span className="conflict-review-count">
+                                      <CheckCircle2 size={11} />已确认
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'phrase' && (
+                                <>
+                                  <span>{c.localRecord.sampleType}</span>
+                                  <span>使用{c.localRecord.useCount || 0}次</span>
+                                  {c.localRecord.pinned && (
+                                    <span className="conflict-review-count">
+                                      <Pin size={11} />已置顶
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
                           <div className="conflict-case-side conflict-side-external">
                             <div className="conflict-side-label">外部版本</div>
                             <div className="conflict-side-content">
-                              <span className={'status ' + statusClass(queueConfig, c.externalRecord.status)}>{c.externalRecord.status}</span>
-                              <span>{c.externalRecord.doctor}</span>
-                              <span>{c.externalRecord.priority}</span>
-                              {(c.externalRecord.reviews || []).length > 0 && (
-                                <span className="conflict-review-count">
-                                  <ShieldCheck size={11} />{(c.externalRecord.reviews || []).length}条复核
-                                </span>
+                              {conflictModule === 'queue' && (
+                                <>
+                                  <span className={'status ' + statusClass(queueConfig, c.externalRecord.status)}>{c.externalRecord.status}</span>
+                                  <span>{c.externalRecord.doctor}</span>
+                                  <span>{c.externalRecord.priority}</span>
+                                  {(c.externalRecord.reviews || []).length > 0 && (
+                                    <span className="conflict-review-count">
+                                      <ShieldCheck size={11} />{(c.externalRecord.reviews || []).length}条复核
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'borrow' && (
+                                <>
+                                  <span className={'status ' + borrowStatusClass(c.externalRecord.status)}>{c.externalRecord.status}</span>
+                                  <span>{c.externalRecord.borrower}</span>
+                                  <span>{c.externalRecord.department}</span>
+                                  {(c.externalRecord.timeline || []).length > 0 && (
+                                    <span className="conflict-review-count">
+                                      <Clock size={11} />{(c.externalRecord.timeline || []).length}条记录
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'notify' && (
+                                <>
+                                  <span className={'status ' + notifyStatusClass(calcNotifyStatus(c.externalRecord))}>
+                                    {calcNotifyStatus(c.externalRecord)}
+                                  </span>
+                                  <span>{c.externalRecord.notifyTarget}</span>
+                                  <span>{c.externalRecord.notifyMethod}</span>
+                                  {c.externalRecord.confirmedAt && (
+                                    <span className="conflict-review-count">
+                                      <CheckCircle2 size={11} />已确认
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                              {conflictModule === 'phrase' && (
+                                <>
+                                  <span>{c.externalRecord.sampleType}</span>
+                                  <span>使用{c.externalRecord.useCount || 0}次</span>
+                                  {c.externalRecord.pinned && (
+                                    <span className="conflict-review-count">
+                                      <Pin size={11} />已置顶
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
@@ -5954,8 +6200,18 @@ function App() {
                   >
                     <div className="strategy-icon"><Layers size={20} /></div>
                     <div className="strategy-info">
-                      <strong>按病例合并</strong>
-                      <p>智能合并双方修改：合并状态时间线、保留双方复核意见、按时间取最新标量字段、合并新增记录。删除冲突需人工确认。</p>
+                      <strong>
+                        {conflictModule === 'queue' && '按病例合并'}
+                        {conflictModule === 'borrow' && '按记录合并'}
+                        {conflictModule === 'notify' && '按通知合并'}
+                        {conflictModule === 'phrase' && '按短语合并'}
+                      </strong>
+                      <p>
+                        {conflictModule === 'queue' && '智能合并双方修改：合并状态时间线、保留双方复核意见、按时间取最新标量字段、合并新增记录。删除冲突需人工确认。'}
+                        {conflictModule === 'borrow' && '智能合并双方修改：合并借阅时间线、保留所有状态变更记录、按时间取最新标量字段、合并新增记录。删除冲突需人工确认。'}
+                        {conflictModule === 'notify' && '智能合并双方修改：保留确认记录、按时间取最新通知状态、合并新增通知。删除冲突需人工确认。'}
+                        {conflictModule === 'phrase' && '智能合并双方修改：取最新短语内容、合并使用次数、保留置顶状态、合并新增短语。删除冲突需人工确认。'}
+                      </p>
                     </div>
                   </button>
                 </div>
