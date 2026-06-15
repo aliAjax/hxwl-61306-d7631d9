@@ -1,11 +1,49 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown, ArrowUpCircle, RefreshCw } from 'lucide-react';
 import {
-  TabSync,
-  mergeBorrowRecord,
-  mergeNotifyRecord,
-  mergePhraseRecord
+  TabSync
 } from './tabSync';
+import { useSlideBorrowing } from './modules/useSlideBorrowing';
+import { useCriticalNotify, notifyStatusClass as notifyStatusClassFn } from './modules/useCriticalNotify';
+import { useDiagnosisPhrases } from './modules/useDiagnosisPhrases';
+import {
+  SLIDE_BORROW_STATUS,
+  SLIDE_BORROW_STATUS_LIST,
+  DEFAULT_DEPARTMENTS,
+  formatDateShort,
+  calcBorrowStatus,
+  borrowStatusClass,
+  getFullBorrowTimeline,
+  isOverdue,
+  overdueDays,
+  isSoonOverdue,
+  soonOverdueHours
+} from './modules/slideBorrowing';
+import {
+  CRITICAL_NOTIFY_STATUS,
+  CRITICAL_NOTIFY_STATUS_LIST,
+  CRITICAL_NOTIFY_METHODS,
+  CRITICAL_NOTIFY_REASONS,
+  NOTIFY_TARGET_PRESETS,
+  NOTIFY_DUPLICATE_WINDOW_MINUTES,
+  NOTIFY_REMINDER_MINUTES,
+  NOTIFY_ESCALATE_WINDOW_MINUTES,
+  NOTIFY_ESCALATE_TARGETS,
+  calcNotifyStatus,
+  isNotifyOverdue,
+  notifyOverdueMinutes,
+  minutesSinceSent,
+  canEscalateNotify,
+  getNotifyEscalations,
+  hasDuplicateUnconfirmedNotify,
+  hasRecentEscalation,
+  loadLatestCriticalNotifies,
+  notifyStatusClass as notifyStatusClassPure
+} from './modules/criticalNotify';
+import {
+  PHRASE_LIBRARY_STORAGE,
+  PHRASE_SAMPLE_TYPES
+} from './modules/diagnosisPhrases';
 import { ConfigManager } from './components/ConfigManager';
 import {
   loadConfig,
@@ -55,317 +93,13 @@ function safeGetIcon(iconName) {
   return ICON_MAP[iconName] || CircleDot;
 }
 
-const SLIDE_BORROW_STORAGE = 'hxwl-61306-slide-borrow';
-const SLIDE_BORROW_STATUS = {
-  BORROWED: '已借出',
-  RECEIVED: '已接收',
-  RETURNED: '已归还',
-  SOON_OVERDUE: '即将逾期',
-  OVERDUE: '已逾期'
-};
 
-const SLIDE_BORROW_STATUS_LIST = ['全部', '已借出', '已接收', '即将逾期', '已逾期', '已归还'];
 
-const SLIDE_BORROW_SEED = [
-  {
-    caseNo: 'P2026061301',
-    borrower: '张医生',
-    department: '外科',
-    borrowTime: '2026-06-12T09:00',
-    receiveTime: '2026-06-12T10:30',
-    expectedReturnTime: '2026-06-14T17:00',
-    actualReturnTime: '',
-    status: '已借出',
-    remark: '会诊用玻片，需仔细观察切缘'
-  },
-  {
-    caseNo: 'P2026061405',
-    borrower: '陈医生',
-    department: '肿瘤科',
-    borrowTime: '2026-06-13T10:00',
-    receiveTime: '2026-06-13T11:15',
-    expectedReturnTime: '2026-06-15T10:00',
-    actualReturnTime: '',
-    status: '已借出',
-    remark: '多学科会诊用，预计明日上午归还'
-  },
-  {
-    caseNo: 'P2026061208',
-    borrower: '王医生',
-    department: '内科',
-    borrowTime: '2026-06-10T14:00',
-    receiveTime: '2026-06-10T15:20',
-    expectedReturnTime: '2026-06-12T17:00',
-    actualReturnTime: '',
-    status: '已逾期',
-    remark: '教学查房用'
-  },
-  {
-    caseNo: 'P2026061117',
-    borrower: '刘医生',
-    department: '病理科',
-    borrowTime: '2026-06-11T08:30',
-    receiveTime: '2026-06-11T09:00',
-    expectedReturnTime: '2026-06-13T17:00',
-    actualReturnTime: '2026-06-13T16:30',
-    status: '已归还',
-    remark: '复核完成'
-  }
-];
 
-const DEFAULT_DEPARTMENTS = ['病理科', '外科', '内科', '肿瘤科', '妇产科', '儿科', '骨科', '皮肤科', '眼科', '耳鼻喉科'];
 
-const CRITICAL_NOTIFY_STORAGE = 'hxwl-61306-critical-notify';
-const CRITICAL_NOTIFY_STATUS = {
-  PENDING: '待确认',
-  CONFIRMED: '已确认',
-  EXPIRED: '已超时'
-};
-const CRITICAL_NOTIFY_STATUS_LIST = ['全部', '待确认', '已确认', '已超时'];
-const CRITICAL_NOTIFY_METHODS = ['电话', '短信', '微信', '系统消息', '现场通知', '其他'];
-const CRITICAL_NOTIFY_REASONS = ['危急病例', '进入待复核'];
-const NOTIFY_TARGET_PRESETS = ['临床主管医生', '科室主任', '病理科主任', '护士站', '手术室', '家属', '医务科'];
-const NOTIFY_DUPLICATE_WINDOW_MINUTES = 30;
-const NOTIFY_REMINDER_MINUTES = 15;
-const NOTIFY_EXPIRE_HOURS = 24;
-const NOTIFY_ESCALATE_WINDOW_MINUTES = 30;
-const NOTIFY_ESCALATE_TARGETS = ['科室主任', '医务科'];
 
-const CRITICAL_NOTIFY_SEED = [
-  {
-    caseNo: 'P2026061117',
-    notifyTarget: '周医生',
-    notifyMethod: '电话',
-    sentAt: '2026-06-13T09:00',
-    confirmedAt: '2026-06-13T09:08',
-    confirmedBy: '周医生',
-    remark: '已电话通知，医生表示立即处理',
-    triggerReason: '危急病例',
-    priority: '危急',
-    status: '已确认'
-  },
-  {
-    caseNo: 'P2026061117',
-    notifyTarget: '外科护士站',
-    notifyMethod: '系统消息',
-    sentAt: '2026-06-14T08:30',
-    confirmedAt: '',
-    confirmedBy: '',
-    remark: '',
-    triggerReason: '进入待复核',
-    priority: '危急',
-    status: '待确认'
-  }
-];
 
-const PHRASE_LIBRARY_STORAGE = 'hxwl-61306-phrase-library';
 
-const PHRASE_LIBRARY_SEED = [
-  {
-    phrase: '镜下见肿瘤细胞呈巢状排列，核大深染，核分裂象易见，考虑为恶性肿瘤。',
-    sampleType: '手术切除',
-    useCount: 12,
-    lastUsedAt: '2026-06-12T10:30:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  },
-  {
-    phrase: '胃黏膜慢性炎，伴肠上皮化生，未见异型增生，建议定期复查。',
-    sampleType: '胃镜',
-    useCount: 25,
-    lastUsedAt: '2026-06-13T14:20:00.000Z',
-    pinned: true,
-    pinnedAt: '2026-06-13T14:20:00.000Z'
-  },
-  {
-    phrase: '结肠黏膜慢性炎，可见溃疡形成，伴炎性息肉，建议治疗后复查。',
-    sampleType: '肠镜',
-    useCount: 18,
-    lastUsedAt: '2026-06-11T09:15:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  },
-  {
-    phrase: '细针穿刺涂片见异型细胞，考虑为腺癌，建议进一步活检明确诊断。',
-    sampleType: '穿刺',
-    useCount: 8,
-    lastUsedAt: '2026-06-10T16:45:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  },
-  {
-    phrase: '细胞学检查见大量炎性细胞，未见明确癌细胞，建议结合临床。',
-    sampleType: '细胞学',
-    useCount: 15,
-    lastUsedAt: '2026-06-09T11:00:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  },
-  {
-    phrase: '切缘未见肿瘤细胞，肿瘤浸润至浆膜层，伴淋巴结转移（2/12）。',
-    sampleType: '手术切除',
-    useCount: 6,
-    lastUsedAt: '2026-06-08T15:30:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  },
-  {
-    phrase: '胃体溃疡型中分化腺癌，溃疡大小约2.5cm，侵及黏膜下层。',
-    sampleType: '胃镜',
-    useCount: 10,
-    lastUsedAt: '2026-06-13T08:50:00.000Z',
-    pinned: true,
-    pinnedAt: '2026-06-12T08:00:00.000Z'
-  },
-  {
-    phrase: '乳腺穿刺标本：浸润性导管癌，ER(+)，PR(+)，HER2(-)，Ki-67约30%。',
-    sampleType: '穿刺',
-    useCount: 4,
-    lastUsedAt: '2026-06-07T13:20:00.000Z',
-    pinned: false,
-    pinnedAt: ''
-  }
-];
-
-const PHRASE_SAMPLE_TYPES = ['全部', '穿刺', '胃镜', '肠镜', '手术切除', '细胞学'];
-
-function loadPhrases() {
-  const raw = localStorage.getItem(PHRASE_LIBRARY_STORAGE);
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      return data.map((item) => ({
-        ...item,
-        id: item.id || uid(),
-        pinned: typeof item.pinned === 'boolean' ? item.pinned : false,
-        pinnedAt: item.pinnedAt || ''
-      }));
-    } catch {
-      return withPhraseIds(PHRASE_LIBRARY_SEED);
-    }
-  }
-  return withPhraseIds(PHRASE_LIBRARY_SEED);
-}
-
-function withPhraseIds(items) {
-  return items.map((item) => ({
-    id: uid(),
-    createdAt: item.createdAt || new Date().toISOString(),
-    pinned: typeof item.pinned === 'boolean' ? item.pinned : false,
-    pinnedAt: item.pinnedAt || '',
-    ...item
-  }));
-}
-
-function persistPhrases(next) {
-  localStorage.setItem(PHRASE_LIBRARY_STORAGE, JSON.stringify(next));
-}
-
-function loadCriticalNotifies() {
-  const raw = localStorage.getItem(CRITICAL_NOTIFY_STORAGE);
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      return data.map((item) => ({ ...item, id: item.id || uid() }));
-    } catch {
-      return withNotifyIds(CRITICAL_NOTIFY_SEED);
-    }
-  }
-  return withNotifyIds(CRITICAL_NOTIFY_SEED);
-}
-
-function withNotifyIds(items) {
-  return items.map((item) => ({
-    id: uid(),
-    createdAt: item.createdAt || item.sentAt || new Date().toISOString(),
-    ...item
-  }));
-}
-
-function persistNotifies(next) {
-  localStorage.setItem(CRITICAL_NOTIFY_STORAGE, JSON.stringify(next));
-}
-
-function calcNotifyStatus(item) {
-  if (item.confirmedAt) return CRITICAL_NOTIFY_STATUS.CONFIRMED;
-  const now = Date.now();
-  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
-  const expireMs = NOTIFY_EXPIRE_HOURS * 60 * 60 * 1000;
-  if (now - sentTime > expireMs) return CRITICAL_NOTIFY_STATUS.EXPIRED;
-  return CRITICAL_NOTIFY_STATUS.PENDING;
-}
-
-function isNotifyOverdue(item) {
-  if (item.confirmedAt) return false;
-  const now = Date.now();
-  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
-  const overdueMs = NOTIFY_REMINDER_MINUTES * 60 * 1000;
-  return now - sentTime > overdueMs;
-}
-
-function notifyOverdueMinutes(item) {
-  if (!isNotifyOverdue(item)) return 0;
-  const now = Date.now();
-  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
-  return Math.floor((now - sentTime) / 60000);
-}
-
-function minutesSinceSent(item) {
-  const now = Date.now();
-  const sentTime = new Date(item.sentAt || item.createdAt).getTime();
-  return Math.floor((now - sentTime) / 60000);
-}
-
-function hasDuplicateUnconfirmedNotify(caseId, caseNo, notifyTarget, notifies) {
-  const now = Date.now();
-  const windowMs = NOTIFY_DUPLICATE_WINDOW_MINUTES * 60 * 1000;
-  return notifies.some((n) => {
-    const caseMatch = (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo);
-    if (!caseMatch) return false;
-    if (n.notifyTarget !== notifyTarget) return false;
-    if (n.confirmedAt) return false;
-    const sentTime = new Date(n.sentAt || n.createdAt).getTime();
-    return now - sentTime < windowMs;
-  });
-}
-
-function canEscalateNotify(item) {
-  if (!item) return false;
-  if (item.confirmedAt) return false;
-  return isNotifyOverdue(item);
-}
-
-function hasRecentEscalation(caseId, caseNo, escalateTarget, notifies, windowMinutes = NOTIFY_ESCALATE_WINDOW_MINUTES) {
-  const now = Date.now();
-  const windowMs = windowMinutes * 60 * 1000;
-  return notifies.some((n) => {
-    const caseMatch = (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo);
-    if (!caseMatch) return false;
-    if (n.notifyTarget !== escalateTarget) return false;
-    if (!n.isEscalation) return false;
-    const escalateTime = new Date(n.createdAt || n.sentAt).getTime();
-    return now - escalateTime < windowMs;
-  });
-}
-
-function getNotifyEscalations(notifyId, notifies) {
-  if (!notifyId) return [];
-  return notifies.filter((n) => n.parentNotifyId === notifyId);
-}
-
-function loadLatestCriticalNotifies() {
-  try {
-    const raw = localStorage.getItem(CRITICAL_NOTIFY_STORAGE);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function isCriticalNotifyEligible(config, record) {
-  return isCriticalEligible(config, record);
-}
 
 function formatDateTime(dateStr) {
   if (!dateStr) return '-';
@@ -381,15 +115,7 @@ function formatDateTime(dateStr) {
   }
 }
 
-function formatDateTimeInput(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, '0');
-  const year = date.getFullYear();
-  const month = pad(date.getMonth() + 1);
-  const day = pad(date.getDate());
-  const hours = pad(date.getHours());
-  const minutes = pad(date.getMinutes());
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
+
 
 const today = new Date().toISOString().slice(0, 10);
 
@@ -421,181 +147,7 @@ function loadRecords(config) {
   return withIds(config, config.seedData || INITIAL_CONFIG.seedData);
 }
 
-function loadSlideBorrows() {
-  const raw = localStorage.getItem(SLIDE_BORROW_STORAGE);
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      return data.map((item) => ({ ...item, id: item.id || uid() }));
-    } catch {
-      return withBorrowIds(SLIDE_BORROW_SEED);
-    }
-  }
-  return withBorrowIds(SLIDE_BORROW_SEED);
-}
 
-function withBorrowIds(items) {
-  return items.map((item) => ({
-    id: uid(),
-    timeline: item.timeline || buildBorrowTimeline(item),
-    ...item
-  }));
-}
-
-function buildBorrowTimeline(item) {
-  if (!item) return [];
-  const timeline = [];
-  if (item.borrowTime) {
-    timeline.push({
-      type: 'slide-borrow',
-      event: '玻片借出',
-      at: formatDateShort(item.borrowTime),
-      by: item.borrower || '系统',
-      changedAt: item.borrowTime,
-      department: item.department
-    });
-  }
-  if (item.receiveTime) {
-    timeline.push({
-      type: 'slide-receive',
-      event: '玻片接收',
-      at: formatDateShort(item.receiveTime),
-      by: item.borrower || '借阅人',
-      changedAt: item.receiveTime
-    });
-  }
-  if (item.actualReturnTime) {
-    timeline.push({
-      type: 'slide-return',
-      event: '玻片归还',
-      at: formatDateShort(item.actualReturnTime),
-      by: '病理科',
-      changedAt: item.actualReturnTime
-    });
-  }
-  return timeline;
-}
-
-function formatDateShort(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-function calcBorrowStatus(item) {
-  if (item.status === SLIDE_BORROW_STATUS.RETURNED) {
-    return SLIDE_BORROW_STATUS.RETURNED;
-  }
-  const now = new Date().getTime();
-  const expected = new Date(item.expectedReturnTime).getTime();
-  if (!item.actualReturnTime && now > expected) {
-    return SLIDE_BORROW_STATUS.OVERDUE;
-  }
-  if (!item.actualReturnTime && isSoonOverdue(item)) {
-    return SLIDE_BORROW_STATUS.SOON_OVERDUE;
-  }
-  if (item.receiveTime) {
-    return SLIDE_BORROW_STATUS.RECEIVED;
-  }
-  return SLIDE_BORROW_STATUS.BORROWED;
-}
-
-function isOverdue(item) {
-  if (item.status === SLIDE_BORROW_STATUS.RETURNED) return false;
-  const now = new Date().getTime();
-  const expected = new Date(item.expectedReturnTime).getTime();
-  return now > expected;
-}
-
-function isSoonOverdue(item) {
-  if (item.status === SLIDE_BORROW_STATUS.RETURNED) return false;
-  if (isOverdue(item)) return false;
-  if (item.actualReturnTime) return false;
-  const now = new Date().getTime();
-  const expected = new Date(item.expectedReturnTime).getTime();
-  const diffHours = (expected - now) / (1000 * 60 * 60);
-  return diffHours >= 0 && diffHours <= 24;
-}
-
-function overdueDays(item) {
-  if (!isOverdue(item)) return 0;
-  const now = new Date().getTime();
-  const expected = new Date(item.expectedReturnTime).getTime();
-  return Math.ceil((now - expected) / (1000 * 60 * 60 * 24));
-}
-
-function soonOverdueHours(item) {
-  if (!isSoonOverdue(item)) return 0;
-  const now = new Date().getTime();
-  const expected = new Date(item.expectedReturnTime).getTime();
-  return Math.ceil((expected - now) / (1000 * 60 * 60));
-}
-
-function borrowStatusClass(status) {
-  switch (status) {
-    case SLIDE_BORROW_STATUS.BORROWED:
-      return 'borrow-status-borrowed';
-    case SLIDE_BORROW_STATUS.RECEIVED:
-      return 'borrow-status-received';
-    case SLIDE_BORROW_STATUS.RETURNED:
-      return 'borrow-status-returned';
-    case SLIDE_BORROW_STATUS.SOON_OVERDUE:
-      return 'borrow-status-soon-overdue';
-    case SLIDE_BORROW_STATUS.OVERDUE:
-      return 'borrow-status-overdue';
-    default:
-      return 'borrow-status-borrowed';
-  }
-}
-
-function getFullBorrowTimeline(item) {
-  if (!item) return [];
-  const baseTimeline = [...(item.timeline || buildBorrowTimeline(item))];
-  if (isSoonOverdue(item)) {
-    const sdHours = soonOverdueHours(item);
-    const soonOverdueTime = new Date(new Date(item.expectedReturnTime).getTime() - 24 * 60 * 60 * 1000);
-    const soonOverdueEvent = {
-      type: 'slide-soon-overdue',
-      event: `即将逾期（剩${sdHours}小时）`,
-      at: formatDateShort(soonOverdueTime.toISOString()),
-      by: '系统提醒',
-      changedAt: soonOverdueTime.toISOString(),
-      soonOverdueHours: sdHours
-    };
-    const soonOverdueTimeMs = soonOverdueTime.getTime();
-    let insertIndex = baseTimeline.length;
-    for (let i = 0; i < baseTimeline.length; i++) {
-      const t = new Date(baseTimeline[i].changedAt || baseTimeline[i].at).getTime();
-      if (t > soonOverdueTimeMs) {
-        insertIndex = i;
-        break;
-      }
-    }
-    baseTimeline.splice(insertIndex, 0, soonOverdueEvent);
-  }
-  if (isOverdue(item)) {
-    const odDays = overdueDays(item);
-    const overdueEvent = {
-      type: 'slide-overdue',
-      event: `玻片逾期（超${odDays}天）`,
-      at: formatDateShort(item.expectedReturnTime),
-      by: '系统提醒',
-      changedAt: item.expectedReturnTime,
-      overdueDays: odDays
-    };
-    const expectedTime = new Date(item.expectedReturnTime).getTime();
-    let insertIndex = baseTimeline.length;
-    for (let i = 0; i < baseTimeline.length; i++) {
-      const t = new Date(baseTimeline[i].changedAt || baseTimeline[i].at).getTime();
-      if (t > expectedTime) {
-        insertIndex = i;
-        break;
-      }
-    }
-    baseTimeline.splice(insertIndex, 0, overdueEvent);
-  }
-  return baseTimeline;
-}
 
 function avg(numbers) {
   const valid = numbers.filter((value) => Number.isFinite(value));
@@ -924,9 +476,6 @@ function App() {
   const [showConfigManager, setShowConfigManager] = useState(false);
   const [records, setRecords] = useState(() => loadRecords(INITIAL_CONFIG));
   const tabSyncRef = useRef(null);
-  const borrowSyncRef = useRef(null);
-  const notifySyncRef = useRef(null);
-  const phraseSyncRef = useRef(null);
   const [activeTabCount, setActiveTabCount] = useState(1);
   const [conflictInfo, setConflictInfo] = useState(null);
   const [showConflictModal, setShowConflictModal] = useState(false);
@@ -946,6 +495,77 @@ function App() {
   const [tempDefaultValues, setTempDefaultValues] = useState({});
   const [detectedHeader, setDetectedHeader] = useState(false);
   const [tick, setTick] = useState(0);
+
+  const borrowHook = useSlideBorrowing(tick, {
+    onConflict: (conflictData) => {
+      setConflictModule('borrow');
+      setConflictInfo(conflictData);
+      setShowConflictModal(true);
+    }
+  });
+  const {
+    slideBorrows, setSlideBorrows,
+    slideBorrowFilters, setSlideBorrowFilters,
+    showBorrowModal, setShowBorrowModal,
+    editingBorrow, setEditingBorrow,
+    borrowForm, setBorrowForm,
+    selectedBorrowForDetail, setSelectedBorrowForDetail,
+    filteredSlideBorrows, borrowStats, departmentList, getCaseBorrowRecords,
+    openBorrowModal, closeBorrowModal, handleBorrowSubmit,
+    handleReturnSlide, handleReceiveSlide, removeBorrowRecord,
+    borrowSyncRef, persistBorrows, getFullBorrowTimeline: getFullBorrowTimelineFn
+  } = borrowHook;
+
+  const notifyHook = useCriticalNotify(tick, {
+    onConflict: (conflictData) => {
+      setConflictModule('notify');
+      setConflictInfo(conflictData);
+      setShowConflictModal(true);
+    }
+  });
+  const {
+    criticalNotifies, setCriticalNotifies,
+    notifyFilters, setNotifyFilters,
+    showNotifyModal, setShowNotifyModal,
+    notifyForm, setNotifyForm,
+    selectedNotifyForDetail, setSelectedNotifyForDetail,
+    notifyDuplicateWarning, setNotifyDuplicateWarning,
+    showEscalateModal, setShowEscalateModal,
+    escalateSourceNotify, setEscalateSourceNotify,
+    escalateForm, setEscalateForm,
+    escalateWarning, setEscalateWarning,
+    filteredNotifies, notifyStats,
+    notifySyncRef, persistCriticalNotifies,
+    openNotifyModal, closeNotifyModal, checkNotifyDuplicate,
+    openEscalateModal, closeEscalateModal, checkEscalateDuplicate,
+    getCaseNotifies,
+    confirmNotifyRecord, createEscalateNotify, removeNotifyRecord
+  } = notifyHook;
+
+  const phraseHook = useDiagnosisPhrases(tick, {
+    onConflict: (conflictData) => {
+      setConflictModule('phrase');
+      setConflictInfo(conflictData);
+      setShowConflictModal(true);
+    }
+  });
+  const {
+    phrases, setPhrases,
+    phraseFilters, setPhraseFilters,
+    showPhraseModal, setShowPhraseModal,
+    editingPhrase, setEditingPhrase,
+    phraseForm, setPhraseForm,
+    phraseDeleteConfirm, setPhraseDeleteConfirm,
+    phrasePickerTarget, setPhrasePickerTarget,
+    showPhrasePicker, setShowPhrasePicker,
+    filteredPhrases, phraseStats,
+    phraseSyncRef, handlePhrasesPersist,
+    openPhraseModal, closePhraseModal, handlePhraseSubmit,
+    confirmDeletePhrase, cancelDeletePhrase,
+    removePhrase, recordPhraseUsage, togglePhrasePin,
+    openPhrasePicker, closePhrasePicker
+  } = phraseHook;
+
   const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
   const [reviewEditing, setReviewEditing] = useState(false);
   const [noteAdding, setNoteAdding] = useState(false);
@@ -962,57 +582,6 @@ function App() {
   const [dispatchResult, setDispatchResult] = useState(null);
   const [showDispatchConfirm, setShowDispatchConfirm] = useState(false);
   const [selectedDoctorForDetail, setSelectedDoctorForDetail] = useState(null);
-  const [slideBorrows, setSlideBorrows] = useState(loadSlideBorrows);
-  const [slideBorrowFilters, setSlideBorrowFilters] = useState({ query: '', status: '全部', department: '全部' });
-  const [showBorrowModal, setShowBorrowModal] = useState(false);
-  const [editingBorrow, setEditingBorrow] = useState(null);
-  const [borrowForm, setBorrowForm] = useState({
-    caseNo: '',
-    borrower: '',
-    department: '病理科',
-    borrowTime: '',
-    receiveTime: '',
-    expectedReturnTime: '',
-    actualReturnTime: '',
-    remark: ''
-  });
-  const [selectedBorrowForDetail, setSelectedBorrowForDetail] = useState(null);
-  const [criticalNotifies, setCriticalNotifies] = useState(loadCriticalNotifies);
-  const [notifyFilters, setNotifyFilters] = useState({ query: '', status: '全部', priority: '全部' });
-  const [showNotifyModal, setShowNotifyModal] = useState(false);
-  const [notifyForm, setNotifyForm] = useState({
-    caseId: '',
-    caseNo: '',
-    notifyTarget: '',
-    notifyMethod: '电话',
-    sentAt: '',
-    triggerReason: '危急病例',
-    remark: ''
-  });
-  const [selectedNotifyForDetail, setSelectedNotifyForDetail] = useState(null);
-  const [notifyDuplicateWarning, setNotifyDuplicateWarning] = useState('');
-  const [showEscalateModal, setShowEscalateModal] = useState(false);
-  const [escalateSourceNotify, setEscalateSourceNotify] = useState(null);
-  const [escalateForm, setEscalateForm] = useState({
-    escalateTarget: '科室主任',
-    notifyMethod: '电话',
-    sentAt: '',
-    remark: ''
-  });
-  const [escalateWarning, setEscalateWarning] = useState('');
-  const [phrases, setPhrases] = useState(loadPhrases);
-  const [phraseFilters, setPhraseFilters] = useState({ query: '', sampleType: '全部' });
-  const [showPhraseModal, setShowPhraseModal] = useState(false);
-  const [editingPhrase, setEditingPhrase] = useState(null);
-  const [phraseForm, setPhraseForm] = useState({
-    phrase: '',
-    sampleType: '穿刺',
-    useCount: 0,
-    lastUsedAt: ''
-  });
-  const [phraseDeleteConfirm, setPhraseDeleteConfirm] = useState(null);
-  const [phrasePickerTarget, setPhrasePickerTarget] = useState(null);
-  const [showPhrasePicker, setShowPhrasePicker] = useState(false);
 
   const [views, setViews] = useState(() => loadViews(INITIAL_CONFIG));
   const [activeViewId, setActiveViewId] = useState(() => loadActiveViewId() || 'v_default_all');
@@ -1081,22 +650,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!showEscalateModal || !escalateSourceNotify) return;
-    const latestNotifies = loadLatestCriticalNotifies();
-    const isDup = hasRecentEscalation(
-      escalateSourceNotify.caseId,
-      escalateSourceNotify.caseNo,
-      escalateForm.escalateTarget,
-      latestNotifies
-    );
-    if (isDup) {
-      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
-    } else {
-      setEscalateWarning('');
-    }
-  }, [showEscalateModal, escalateSourceNotify, escalateForm.escalateTarget]);
-
-  useEffect(() => {
     const initialRecords = loadRecords(queueConfig);
     const storageKey = queueConfig.storage || INITIAL_CONFIG.storage;
     const tabSync = new TabSync(storageKey, {
@@ -1125,97 +678,6 @@ function App() {
       tabSync.destroy();
     };
   }, [queueConfig]);
-
-  useEffect(() => {
-    const initialBorrows = loadSlideBorrows();
-    const borrowSync = new TabSync(SLIDE_BORROW_STORAGE, {
-      mergeOptions: {
-        mergeRecordFn: mergeBorrowRecord,
-        sortField: 'borrowTime'
-      },
-      conflictOptions: {
-        getDisplayLabel: (r) => r.caseNo || r.id
-      },
-      onExternalUpdate: (externalRecords) => {
-        setSlideBorrows(externalRecords);
-        setSelectedBorrowForDetail((prevSelected) => {
-          if (!prevSelected) return null;
-          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
-          return updatedSelected || null;
-        });
-      },
-      onConflict: (conflictData) => {
-        setConflictModule('borrow');
-        setConflictInfo(conflictData);
-        setShowConflictModal(true);
-      }
-    });
-    borrowSync.init(initialBorrows);
-    borrowSyncRef.current = borrowSync;
-
-    return () => {
-      borrowSync.destroy();
-    };
-  }, []);
-
-  useEffect(() => {
-    const initialNotifies = loadCriticalNotifies();
-    const notifySync = new TabSync(CRITICAL_NOTIFY_STORAGE, {
-      mergeOptions: {
-        mergeRecordFn: mergeNotifyRecord,
-        sortField: 'sentAt'
-      },
-      conflictOptions: {
-        getDisplayLabel: (r) => `${r.caseNo} - ${r.notifyTarget}`
-      },
-      onExternalUpdate: (externalRecords) => {
-        setCriticalNotifies(externalRecords);
-        setSelectedNotifyForDetail((prevSelected) => {
-          if (!prevSelected) return null;
-          const updatedSelected = externalRecords.find((r) => r.id === prevSelected.id);
-          return updatedSelected || null;
-        });
-      },
-      onConflict: (conflictData) => {
-        setConflictModule('notify');
-        setConflictInfo(conflictData);
-        setShowConflictModal(true);
-      }
-    });
-    notifySync.init(initialNotifies);
-    notifySyncRef.current = notifySync;
-
-    return () => {
-      notifySync.destroy();
-    };
-  }, []);
-
-  useEffect(() => {
-    const initialPhrases = loadPhrases();
-    const phraseSync = new TabSync(PHRASE_LIBRARY_STORAGE, {
-      mergeOptions: {
-        mergeRecordFn: mergePhraseRecord,
-        sortField: 'createdAt'
-      },
-      conflictOptions: {
-        getDisplayLabel: (r) => (r.phrase || '').slice(0, 30) + '...'
-      },
-      onExternalUpdate: (externalRecords) => {
-        setPhrases(externalRecords);
-      },
-      onConflict: (conflictData) => {
-        setConflictModule('phrase');
-        setConflictInfo(conflictData);
-        setShowConflictModal(true);
-      }
-    });
-    phraseSync.init(initialPhrases);
-    phraseSyncRef.current = phraseSync;
-
-    return () => {
-      phraseSync.destroy();
-    };
-  }, []);
 
   useEffect(() => {
     setFilters(buildInitialFiltersState(queueConfig));
@@ -1966,24 +1428,6 @@ function App() {
     }
   }
 
-  function persistBorrows(next) {
-    setSlideBorrows(next);
-    if (borrowSyncRef.current) {
-      borrowSyncRef.current.persist(next);
-    } else {
-      localStorage.setItem(SLIDE_BORROW_STORAGE, JSON.stringify(next));
-    }
-  }
-
-  function persistCriticalNotifies(next) {
-    setCriticalNotifies(next);
-    if (notifySyncRef.current) {
-      notifySyncRef.current.persist(next);
-    } else {
-      persistNotifies(next);
-    }
-  }
-
   function handleConflictResolve(strategy) {
     if (!conflictInfo) return;
 
@@ -2035,126 +1479,6 @@ function App() {
     setShowConflictModal(false);
   }
 
-  function handlePhrasesPersist(next) {
-    setPhrases(next);
-    if (phraseSyncRef.current) {
-      phraseSyncRef.current.persist(next);
-    } else {
-      persistPhrases(next);
-    }
-  }
-
-  function openPhraseModal(item = null) {
-    if (item) {
-      setEditingPhrase(item);
-      setPhraseForm({
-        phrase: item.phrase || '',
-        sampleType: item.sampleType || '穿刺',
-        useCount: item.useCount || 0,
-        lastUsedAt: item.lastUsedAt || ''
-      });
-    } else {
-      setEditingPhrase(null);
-      setPhraseForm({
-        phrase: '',
-        sampleType: '穿刺',
-        useCount: 0,
-        lastUsedAt: ''
-      });
-    }
-    setShowPhraseModal(true);
-  }
-
-  function closePhraseModal() {
-    setShowPhraseModal(false);
-    setEditingPhrase(null);
-  }
-
-  function handlePhraseSubmit(e) {
-    e.preventDefault();
-    if (!phraseForm.phrase.trim()) return;
-
-    const now = new Date().toISOString();
-    if (editingPhrase) {
-      const next = phrases.map((item) =>
-        item.id === editingPhrase.id
-          ? {
-              ...item,
-              phrase: phraseForm.phrase.trim(),
-              sampleType: phraseForm.sampleType,
-              updatedAt: now
-            }
-          : item
-      );
-      handlePhrasesPersist(next);
-    } else {
-      const newPhrase = {
-        id: uid(),
-        phrase: phraseForm.phrase.trim(),
-        sampleType: phraseForm.sampleType,
-        useCount: 0,
-        lastUsedAt: '',
-        pinned: false,
-        pinnedAt: '',
-        createdAt: now
-      };
-      handlePhrasesPersist([newPhrase, ...phrases]);
-    }
-    closePhraseModal();
-  }
-
-  function confirmDeletePhrase(id) {
-    setPhraseDeleteConfirm(id);
-  }
-
-  function cancelDeletePhrase() {
-    setPhraseDeleteConfirm(null);
-  }
-
-  function removePhrase(id) {
-    const next = phrases.filter((item) => item.id !== id);
-    handlePhrasesPersist(next);
-    setPhraseDeleteConfirm(null);
-  }
-
-  function recordPhraseUsage(id) {
-    const now = new Date().toISOString();
-    const next = phrases.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            useCount: (item.useCount || 0) + 1,
-            lastUsedAt: now
-          }
-        : item
-    );
-    handlePhrasesPersist(next);
-  }
-
-  function togglePhrasePin(id) {
-    const now = new Date().toISOString();
-    const next = phrases.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            pinned: !item.pinned,
-            pinnedAt: !item.pinned ? now : ''
-          }
-        : item
-    );
-    handlePhrasesPersist(next);
-  }
-
-  function openPhrasePicker(target) {
-    setPhrasePickerTarget(target);
-    setShowPhrasePicker(true);
-  }
-
-  function closePhrasePicker() {
-    setShowPhrasePicker(false);
-    setPhrasePickerTarget(null);
-  }
-
   function applyPhrase(phraseItem) {
     if (!phrasePickerTarget || !selected) {
       closePhrasePicker();
@@ -2187,58 +1511,6 @@ function App() {
     closePhrasePicker();
   }
 
-  function openNotifyModal(caseItem = null) {
-    if (caseItem) {
-      const defaultReason = caseItem.priority === '危急' ? '危急病例' : (caseItem.status === '待复核' ? '进入待复核' : '危急病例');
-      setNotifyForm({
-        caseId: caseItem.id || '',
-        caseNo: caseItem.caseNo || '',
-        notifyTarget: caseItem.doctor || '',
-        notifyMethod: '电话',
-        sentAt: new Date().toISOString().slice(0, 16),
-        triggerReason: defaultReason,
-        remark: ''
-      });
-      setNotifyDuplicateWarning('');
-    } else {
-      setNotifyForm({
-        caseId: '',
-        caseNo: '',
-        notifyTarget: '',
-        notifyMethod: '电话',
-        sentAt: new Date().toISOString().slice(0, 16),
-        triggerReason: '危急病例',
-        remark: ''
-      });
-      setNotifyDuplicateWarning('');
-    }
-    setShowNotifyModal(true);
-  }
-
-  function closeNotifyModal() {
-    setShowNotifyModal(false);
-    setNotifyDuplicateWarning('');
-  }
-
-  function checkNotifyDuplicate() {
-    if (!notifyForm.caseNo || !notifyForm.notifyTarget) {
-      setNotifyDuplicateWarning('');
-      return false;
-    }
-    const isDuplicate = hasDuplicateUnconfirmedNotify(
-      notifyForm.caseId,
-      notifyForm.caseNo,
-      notifyForm.notifyTarget,
-      criticalNotifies
-    );
-    if (isDuplicate) {
-      setNotifyDuplicateWarning(`该病例在${NOTIFY_DUPLICATE_WINDOW_MINUTES}分钟内已存在对「${notifyForm.notifyTarget}」的未确认通知，请勿重复发送`);
-    } else {
-      setNotifyDuplicateWarning('');
-    }
-    return isDuplicate;
-  }
-
   function handleNotifySubmit(e) {
     e.preventDefault();
     if (!notifyForm.caseNo.trim() || !notifyForm.notifyTarget.trim() || !notifyForm.sentAt) {
@@ -2250,7 +1522,7 @@ function App() {
     const now = new Date().toISOString();
     const caseNo = notifyForm.caseNo.trim();
     const caseRecord = records.find((r) => r.caseNo === caseNo);
-    if (!isCriticalNotifyEligible(queueConfig, caseRecord)) {
+    if (!isCriticalEligible(queueConfig, caseRecord)) {
       setNotifyDuplicateWarning('仅支持为优先级为「危急」或状态为「待复核」的病例创建通知，请先选择符合条件的病例');
       return;
     }
@@ -2302,16 +1574,11 @@ function App() {
   }
 
   function confirmNotify(notifyItem, confirmedBy = '') {
-    const now = new Date().toISOString();
-    const confirmer = confirmedBy.trim() || notifyItem.notifyTarget;
-    const nextNotifies = criticalNotifies.map((n) =>
-      n.id === notifyItem.id
-        ? { ...n, confirmedAt: now, confirmedBy: confirmer, status: CRITICAL_NOTIFY_STATUS.CONFIRMED }
-        : n
-    );
+    const nextNotifies = confirmNotifyRecord(notifyItem, confirmedBy, criticalNotifies);
     persistCriticalNotifies(nextNotifies);
     const caseRecord = records.find((r) => r.id === notifyItem.caseId || r.caseNo === notifyItem.caseNo);
     if (caseRecord) {
+      const confirmer = (confirmedBy || '').trim() || notifyItem.notifyTarget;
       const updatedRecords = records.map((item) => {
         if (item.id === caseRecord.id) {
           return {
@@ -2321,9 +1588,9 @@ function App() {
               {
                 type: 'critical-notify-confirmed',
                 event: '通知确认',
-                at: formatDateShort(now),
+                at: formatDateShort(new Date().toISOString()),
                 by: confirmer,
-                changedAt: now,
+                changedAt: new Date().toISOString(),
                 notifyId: notifyItem.id,
                 notifyTarget: notifyItem.notifyTarget,
                 notifyMethod: notifyItem.notifyMethod
@@ -2338,65 +1605,6 @@ function App() {
         setSelected(updatedRecords.find((r) => r.id === caseRecord.id));
       }
     }
-  }
-
-  function removeNotifyRecord(id) {
-    const next = criticalNotifies.filter((item) => item.id !== id);
-    persistCriticalNotifies(next);
-    if (selectedNotifyForDetail?.id === id) {
-      setSelectedNotifyForDetail(null);
-    }
-  }
-
-  function openEscalateModal(notifyItem) {
-    if (!canEscalateNotify(notifyItem)) return;
-    const initialForm = {
-      escalateTarget: '科室主任',
-      notifyMethod: '电话',
-      sentAt: formatDateTimeInput(),
-      remark: `原通知对象「${notifyItem.notifyTarget}」未在规定时间内确认，已升级通知。`
-    };
-    setEscalateSourceNotify(notifyItem);
-    setEscalateForm(initialForm);
-    const latestNotifies = loadLatestCriticalNotifies();
-    const isDup = hasRecentEscalation(
-      notifyItem.caseId,
-      notifyItem.caseNo,
-      initialForm.escalateTarget,
-      latestNotifies
-    );
-    if (isDup) {
-      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${initialForm.escalateTarget}」发送过升级通知，请勿重复升级`);
-    } else {
-      setEscalateWarning('');
-    }
-    setShowEscalateModal(true);
-  }
-
-  function closeEscalateModal() {
-    setShowEscalateModal(false);
-    setEscalateSourceNotify(null);
-    setEscalateWarning('');
-  }
-
-  function checkEscalateDuplicate() {
-    if (!escalateSourceNotify || !escalateForm.escalateTarget) {
-      setEscalateWarning('');
-      return false;
-    }
-    const latestNotifies = loadLatestCriticalNotifies();
-    const isDuplicate = hasRecentEscalation(
-      escalateSourceNotify.caseId,
-      escalateSourceNotify.caseNo,
-      escalateForm.escalateTarget,
-      latestNotifies
-    );
-    if (isDuplicate) {
-      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
-    } else {
-      setEscalateWarning('');
-    }
-    return isDuplicate;
   }
 
   function handleEscalateSubmit(e) {
@@ -2416,29 +1624,9 @@ function App() {
       return;
     }
 
-    const now = new Date().toISOString();
     const caseNo = escalateSourceNotify.caseNo;
     const caseRecord = records.find((r) => r.caseNo === caseNo || r.id === escalateSourceNotify.caseId);
-    const priority = caseRecord?.priority || escalateSourceNotify.priority || '常规';
-
-    const newEscalateNotify = {
-      id: uid(),
-      caseId: escalateSourceNotify.caseId,
-      caseNo,
-      notifyTarget: escalateForm.escalateTarget.trim(),
-      notifyMethod: escalateForm.notifyMethod,
-      sentAt: escalateForm.sentAt,
-      confirmedAt: '',
-      confirmedBy: '',
-      remark: escalateForm.remark.trim(),
-      triggerReason: '通知升级',
-      priority,
-      createdAt: now,
-      isEscalation: true,
-      parentNotifyId: escalateSourceNotify.id
-    };
-
-    const nextNotifies = [newEscalateNotify, ...criticalNotifies];
+    const { newEscalateNotify, nextNotifies } = createEscalateNotify(escalateSourceNotify, escalateForm, caseRecord, criticalNotifies);
     persistCriticalNotifies(nextNotifies);
 
     if (caseRecord) {
@@ -2474,107 +1662,7 @@ function App() {
     closeEscalateModal();
   }
 
-  function getCaseNotifies(caseNo, caseId) {
-    return criticalNotifies.filter((n) =>
-      (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo)
-    );
-  }
-
-  const filteredNotifies = useMemo(() => {
-    void tick;
-    return criticalNotifies
-      .filter((item) => {
-        const realStatus = calcNotifyStatus(item);
-        if (notifyFilters.status !== '全部' && realStatus !== notifyFilters.status) {
-          return false;
-        }
-        if (notifyFilters.priority !== '全部' && item.priority !== notifyFilters.priority) {
-          return false;
-        }
-        if (notifyFilters.query) {
-          const q = notifyFilters.query.toLowerCase();
-          return (
-            item.caseNo.toLowerCase().includes(q) ||
-            item.notifyTarget.toLowerCase().includes(q) ||
-            (item.remark || '').toLowerCase().includes(q)
-          );
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        const statusOrder = { '待确认': 0, '已超时': 1, '已确认': 2 };
-        const statusA = statusOrder[calcNotifyStatus(a)] ?? 9;
-        const statusB = statusOrder[calcNotifyStatus(b)] ?? 9;
-        if (statusA !== statusB) return statusA - statusB;
-        return new Date(b.sentAt || b.createdAt).getTime() - new Date(a.sentAt || a.createdAt).getTime();
-      });
-  }, [criticalNotifies, notifyFilters, tick]);
-
-  const filteredPhrases = useMemo(() => {
-    return phrases
-      .filter((item) => {
-        if (phraseFilters.sampleType !== '全部' && item.sampleType !== phraseFilters.sampleType) {
-          return false;
-        }
-        if (phraseFilters.query) {
-          const q = phraseFilters.query.toLowerCase();
-          return item.phrase.toLowerCase().includes(q);
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
-        if (a.pinned && b.pinned) {
-          const pinA = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
-          const pinB = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
-          return pinB - pinA;
-        }
-        if (a.lastUsedAt && b.lastUsedAt) {
-          return new Date(b.lastUsedAt).getTime() - new Date(a.lastUsedAt).getTime();
-        }
-        if (a.lastUsedAt) return -1;
-        if (b.lastUsedAt) return 1;
-        return (b.useCount || 0) - (a.useCount || 0);
-      });
-  }, [phrases, phraseFilters]);
-
-  const phraseStats = useMemo(() => {
-    let total = phrases.length;
-    let totalUsed = phrases.filter((p) => (p.useCount || 0) > 0).length;
-    let totalUseCount = phrases.reduce((sum, p) => sum + (p.useCount || 0), 0);
-    return { total, totalUsed, totalUseCount };
-  }, [phrases]);
-
-  const notifyStats = useMemo(() => {
-    void tick;
-    let total = criticalNotifies.length;
-    let pending = 0;
-    let confirmed = 0;
-    let expired = 0;
-    let overduePending = 0;
-    criticalNotifies.forEach((item) => {
-      const status = calcNotifyStatus(item);
-      if (status === CRITICAL_NOTIFY_STATUS.PENDING) pending++;
-      if (status === CRITICAL_NOTIFY_STATUS.CONFIRMED) confirmed++;
-      if (status === CRITICAL_NOTIFY_STATUS.EXPIRED) expired++;
-      if (status === CRITICAL_NOTIFY_STATUS.PENDING && isNotifyOverdue(item)) overduePending++;
-    });
-    return { total, pending, confirmed, expired, overduePending };
-  }, [criticalNotifies, tick]);
-
-  const notifyStatusClass = (status) => {
-    switch (status) {
-      case CRITICAL_NOTIFY_STATUS.PENDING:
-        return 'notify-status-pending';
-      case CRITICAL_NOTIFY_STATUS.CONFIRMED:
-        return 'notify-status-confirmed';
-      case CRITICAL_NOTIFY_STATUS.EXPIRED:
-        return 'notify-status-expired';
-      default:
-        return 'notify-status-pending';
-    }
-  };
+  const notifyStatusClass = notifyStatusClassFn;
 
   const notifyMethodIcon = (method) => {
     switch (method) {
@@ -2586,230 +1674,6 @@ function App() {
       default: return Bell;
     }
   };
-
-  function openBorrowModal(item = null) {
-    if (item) {
-      setEditingBorrow(item);
-      setBorrowForm({
-        caseNo: item.caseNo || '',
-        borrower: item.borrower || '',
-        department: item.department || '病理科',
-        borrowTime: item.borrowTime || '',
-        receiveTime: item.receiveTime || '',
-        expectedReturnTime: item.expectedReturnTime || '',
-        actualReturnTime: item.actualReturnTime || '',
-        remark: item.remark || ''
-      });
-    } else {
-      setEditingBorrow(null);
-      setBorrowForm({
-        caseNo: '',
-        borrower: '',
-        department: '病理科',
-        borrowTime: new Date().toISOString().slice(0, 16),
-        receiveTime: '',
-        expectedReturnTime: '',
-        actualReturnTime: '',
-        remark: ''
-      });
-    }
-    setShowBorrowModal(true);
-  }
-
-  function closeBorrowModal() {
-    setShowBorrowModal(false);
-    setEditingBorrow(null);
-  }
-
-  function handleBorrowSubmit(e) {
-    e.preventDefault();
-    if (!borrowForm.caseNo.trim() || !borrowForm.borrower.trim() || !borrowForm.borrowTime || !borrowForm.expectedReturnTime) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    let newStatus = SLIDE_BORROW_STATUS.BORROWED;
-    if (borrowForm.actualReturnTime) {
-      newStatus = SLIDE_BORROW_STATUS.RETURNED;
-    } else if (borrowForm.receiveTime) {
-      newStatus = SLIDE_BORROW_STATUS.RECEIVED;
-    }
-
-    const timeline = [];
-    if (borrowForm.borrowTime) {
-      timeline.push({
-        type: 'slide-borrow',
-        event: '玻片借出',
-        at: formatDateShort(borrowForm.borrowTime),
-        by: borrowForm.borrower,
-        changedAt: borrowForm.borrowTime,
-        department: borrowForm.department
-      });
-    }
-    if (borrowForm.receiveTime) {
-      timeline.push({
-        type: 'slide-receive',
-        event: '玻片接收',
-        at: formatDateShort(borrowForm.receiveTime),
-        by: borrowForm.borrower,
-        changedAt: borrowForm.receiveTime
-      });
-    }
-    if (borrowForm.actualReturnTime) {
-      timeline.push({
-        type: 'slide-return',
-        event: '玻片归还',
-        at: formatDateShort(borrowForm.actualReturnTime),
-        by: '病理科',
-        changedAt: borrowForm.actualReturnTime
-      });
-    }
-
-    if (editingBorrow) {
-      const next = slideBorrows.map((item) =>
-        item.id === editingBorrow.id
-          ? {
-              ...item,
-              ...borrowForm,
-              status: newStatus,
-              timeline,
-              updatedAt: now
-            }
-          : item
-      );
-      persistBorrows(next);
-    } else {
-      const newRecord = {
-        id: uid(),
-        ...borrowForm,
-        status: newStatus,
-        timeline,
-        createdAt: now
-      };
-      persistBorrows([newRecord, ...slideBorrows]);
-    }
-
-    closeBorrowModal();
-  }
-
-  function handleReturnSlide(item) {
-    const now = new Date().toISOString();
-    const returnTime = now;
-    const next = slideBorrows.map((b) =>
-      b.id === item.id
-        ? {
-            ...b,
-            actualReturnTime: returnTime,
-            status: SLIDE_BORROW_STATUS.RETURNED,
-            timeline: [
-              ...(b.timeline || []),
-              {
-                type: 'slide-return',
-                event: '玻片归还',
-                at: formatDateShort(returnTime),
-                by: '病理科',
-                changedAt: returnTime
-              }
-            ]
-          }
-        : b
-    );
-    persistBorrows(next);
-  }
-
-  function handleReceiveSlide(item) {
-    const now = new Date().toISOString();
-    const next = slideBorrows.map((b) =>
-      b.id === item.id
-        ? {
-            ...b,
-            receiveTime: now,
-            status: SLIDE_BORROW_STATUS.RECEIVED,
-            timeline: [
-              ...(b.timeline || []),
-              {
-                type: 'slide-receive',
-                event: '玻片接收',
-                at: formatDateShort(now),
-                by: b.borrower,
-                changedAt: now
-              }
-            ]
-          }
-        : b
-    );
-    persistBorrows(next);
-  }
-
-  function removeBorrowRecord(id) {
-    const next = slideBorrows.filter((item) => item.id !== id);
-    persistBorrows(next);
-  }
-
-  const filteredSlideBorrows = useMemo(() => {
-    void tick;
-    return slideBorrows
-      .filter((item) => {
-        const realStatus = calcBorrowStatus(item);
-        if (slideBorrowFilters.status !== '全部' && realStatus !== slideBorrowFilters.status) {
-          return false;
-        }
-        if (slideBorrowFilters.department !== '全部' && item.department !== slideBorrowFilters.department) {
-          return false;
-        }
-        if (slideBorrowFilters.query) {
-          const q = slideBorrowFilters.query.toLowerCase();
-          return (
-            item.caseNo.toLowerCase().includes(q) ||
-            item.borrower.toLowerCase().includes(q) ||
-            (item.remark || '').toLowerCase().includes(q)
-          );
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        const statusOrder = { '已逾期': 0, '即将逾期': 1, '已借出': 2, '已接收': 3, '已归还': 4 };
-        const statusA = statusOrder[calcBorrowStatus(a)] ?? 9;
-        const statusB = statusOrder[calcBorrowStatus(b)] ?? 9;
-        if (statusA !== statusB) return statusA - statusB;
-        return new Date(b.borrowTime).getTime() - new Date(a.borrowTime).getTime();
-      });
-  }, [slideBorrows, slideBorrowFilters, tick]);
-
-  const borrowStats = useMemo(() => {
-    void tick;
-    let total = slideBorrows.length;
-    let borrowed = 0;
-    let received = 0;
-    let returned = 0;
-    let soonOverdue = 0;
-    let overdue = 0;
-
-    slideBorrows.forEach((item) => {
-      const status = calcBorrowStatus(item);
-      if (status === SLIDE_BORROW_STATUS.BORROWED) borrowed++;
-      if (status === SLIDE_BORROW_STATUS.RECEIVED) received++;
-      if (status === SLIDE_BORROW_STATUS.RETURNED) returned++;
-      if (status === SLIDE_BORROW_STATUS.SOON_OVERDUE) soonOverdue++;
-      if (status === SLIDE_BORROW_STATUS.OVERDUE) overdue++;
-    });
-
-    return { total, borrowed, received, returned, soonOverdue, overdue, unreturned: borrowed + received + soonOverdue + overdue };
-  }, [slideBorrows, tick]);
-
-  const departmentList = useMemo(() => {
-    const depts = new Set(DEFAULT_DEPARTMENTS);
-    slideBorrows.forEach((item) => {
-      if (item.department) depts.add(item.department);
-    });
-    return Array.from(depts).sort();
-  }, [slideBorrows]);
-
-  const getCaseBorrowRecords = useMemo(() => {
-    return (caseNo) => {
-      return slideBorrows.filter((b) => b.caseNo === caseNo);
-    };
-  }, [slideBorrows]);
 
   const getMergedTimeline = useMemo(() => {
     void tick;
@@ -2830,7 +1694,7 @@ function App() {
 
       caseBorrows.forEach((borrow) => {
         if (borrow) {
-          const borrowEvents = getFullBorrowTimeline(borrow) || [];
+          const borrowEvents = getFullBorrowTimelineFn(borrow) || [];
           borrowEvents.forEach((event) => {
             if (event) {
               merged.push({
