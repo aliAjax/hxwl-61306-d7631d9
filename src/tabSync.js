@@ -115,14 +115,56 @@ function isDefined(val) {
   return val !== undefined && val !== null;
 }
 
-function mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime) {
+function hasFieldValue(record, field) {
+  return !!record && hasOwn(record, field) && isDefined(record[field]);
+}
+
+function fieldChangedFromBase(record, baseRecord, field) {
+  const hasRecordValue = hasFieldValue(record, field);
+  const hasBaseValue = hasFieldValue(baseRecord, field);
+  if (hasRecordValue !== hasBaseValue) return true;
+  if (!hasRecordValue) return false;
+  return record[field] !== baseRecord[field];
+}
+
+function assignMergedField(result, field, hasValue, value) {
+  if (hasValue) {
+    result[field] = value;
+  } else {
+    delete result[field];
+  }
+}
+
+function mergeScalarFields(result, localRecord, externalRecord, baseRecord, scalarFields, localTime, externalTime) {
   for (const field of scalarFields) {
-    const hasLocal = hasOwn(localRecord, field) && isDefined(localRecord[field]);
-    const hasExt = hasOwn(externalRecord, field) && isDefined(externalRecord[field]);
+    const hasLocal = hasFieldValue(localRecord, field);
+    const hasExt = hasFieldValue(externalRecord, field);
     const localVal = localRecord[field];
     const extVal = externalRecord[field];
+    const localChanged = fieldChangedFromBase(localRecord, baseRecord, field);
+    const extChanged = fieldChangedFromBase(externalRecord, baseRecord, field);
 
-    if (hasLocal && hasExt && localVal !== extVal) {
+    if (baseRecord) {
+      if (localChanged && !extChanged) {
+        assignMergedField(result, field, hasLocal, localVal);
+      } else if (!localChanged && extChanged) {
+        assignMergedField(result, field, hasExt, extVal);
+      } else if (localChanged && extChanged) {
+        if (hasLocal && hasExt && localVal === extVal) {
+          result[field] = localVal;
+        } else if (localTime >= externalTime) {
+          assignMergedField(result, field, hasLocal, localVal);
+        } else {
+          assignMergedField(result, field, hasExt, extVal);
+        }
+      } else if (hasExt) {
+        result[field] = extVal;
+      } else if (hasLocal) {
+        result[field] = localVal;
+      } else {
+        delete result[field];
+      }
+    } else if (hasLocal && hasExt && localVal !== extVal) {
       result[field] = localTime >= externalTime ? localVal : extVal;
     } else if (hasLocal && !hasExt) {
       result[field] = localVal;
@@ -132,7 +174,7 @@ function mergeScalarFields(result, localRecord, externalRecord, scalarFields, lo
   }
 }
 
-export function mergeCaseRecord(localRecord, externalRecord) {
+export function mergeCaseRecord(localRecord, externalRecord, baseRecord = null) {
   if (!localRecord) return { ...externalRecord };
   if (!externalRecord) return { ...localRecord };
 
@@ -156,7 +198,7 @@ export function mergeCaseRecord(localRecord, externalRecord) {
   const scalarFields = ['caseNo', 'sampleType', 'priority', 'sentAt', 'doctor', 'summary'];
   const result = { ...externalRecord };
 
-  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
+  mergeScalarFields(result, localRecord, externalRecord, baseRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || '';
   const externalCreatedAt = externalRecord.createdAt || '';
@@ -176,7 +218,7 @@ export function mergeCaseRecord(localRecord, externalRecord) {
   return result;
 }
 
-export function mergeBorrowRecord(localRecord, externalRecord) {
+export function mergeBorrowRecord(localRecord, externalRecord, baseRecord = null) {
   if (!localRecord) return { ...externalRecord };
   if (!externalRecord) return { ...localRecord };
 
@@ -198,7 +240,7 @@ export function mergeBorrowRecord(localRecord, externalRecord) {
   ];
   const result = { ...externalRecord };
 
-  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
+  mergeScalarFields(result, localRecord, externalRecord, baseRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || localRecord.borrowTime || '';
   const externalCreatedAt = externalRecord.createdAt || externalRecord.borrowTime || '';
@@ -218,7 +260,7 @@ export function mergeBorrowRecord(localRecord, externalRecord) {
   return result;
 }
 
-export function mergeNotifyRecord(localRecord, externalRecord) {
+export function mergeNotifyRecord(localRecord, externalRecord, baseRecord = null) {
   if (!localRecord) return { ...externalRecord };
   if (!externalRecord) return { ...localRecord };
 
@@ -236,7 +278,7 @@ export function mergeNotifyRecord(localRecord, externalRecord) {
   ];
   const result = { ...externalRecord };
 
-  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
+  mergeScalarFields(result, localRecord, externalRecord, baseRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || localRecord.sentAt || '';
   const externalCreatedAt = externalRecord.createdAt || externalRecord.sentAt || '';
@@ -251,7 +293,7 @@ export function mergeNotifyRecord(localRecord, externalRecord) {
   return result;
 }
 
-export function mergePhraseRecord(localRecord, externalRecord) {
+export function mergePhraseRecord(localRecord, externalRecord, baseRecord = null) {
   if (!localRecord) return { ...externalRecord };
   if (!externalRecord) return { ...localRecord };
 
@@ -264,7 +306,7 @@ export function mergePhraseRecord(localRecord, externalRecord) {
   const scalarFields = ['phrase', 'sampleType', 'pinned', 'pinnedAt', 'lastUsedAt'];
   const result = { ...externalRecord };
 
-  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
+  mergeScalarFields(result, localRecord, externalRecord, baseRecord, scalarFields, localTime, externalTime);
 
   result.useCount = Math.max(
     Number(localRecord.useCount) || 0,
@@ -341,7 +383,7 @@ export function mergeRecordLists(localRecords, externalRecords, baseRecords = []
     }
 
     if (local && ext) {
-      merged.push(mergeRecordFn(local, ext));
+      merged.push(mergeRecordFn(local, ext, base));
     } else if (local) {
       merged.push({ ...local });
     } else if (ext) {
