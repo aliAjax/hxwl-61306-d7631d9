@@ -919,6 +919,10 @@ function App() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRaw, setBatchRaw] = useState('');
   const [batchParsed, setBatchParsed] = useState([]);
+  const [rawParsed, setRawParsed] = useState([]);
+  const [batchColumns, setBatchColumns] = useState([]);
+  const [fieldMapping, setFieldMapping] = useState({});
+  const [tempDefaultValues, setTempDefaultValues] = useState({});
   const [tick, setTick] = useState(0);
   const [reviewForm, setReviewForm] = useState({ reviewDoctor: '', conclusion: '', remark: '' });
   const [reviewEditing, setReviewEditing] = useState(false);
@@ -1156,36 +1160,110 @@ function App() {
   const HEADER_KEYWORDS = queueConfig.batchImport?.headerKeywords ||
     queueConfig.fields.flatMap((f) => [f.label, f.key.toLowerCase()]);
 
-  function parseBatchLines(raw) {
+  function parseRawColumns(raw) {
     const lines = raw.split('\n').map((l) => l.trimEnd()).filter(Boolean);
-    if (!lines.length) return [];
+    if (!lines.length) return { columns: [], data: [] };
 
     let startIndex = 0;
+    let hasHeader = false;
     const firstLine = lines[0].toLowerCase();
     if (HEADER_KEYWORDS.some((kw) => firstLine.includes(String(kw).toLowerCase()))) {
       startIndex = 1;
+      hasHeader = true;
     }
 
-    const fieldCount = BATCH_FIELDS.length;
-    const existingCaseNos = new Set(records.map((r) => r.caseNo));
-    const seenCaseNos = new Set();
-    const parsed = [];
-    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const firstDataLine = lines[startIndex] || '';
+    const firstParts = firstDataLine.split('\t');
+    const columnCount = firstParts.length;
 
+    const columns = [];
+    if (hasHeader) {
+      const headerParts = lines[0].split('\t').map((p) => p.trim());
+      for (let i = 0; i < Math.max(columnCount, headerParts.length); i++) {
+        columns.push({
+          index: i,
+          name: headerParts[i]?.trim() || `列${i + 1}`,
+          originalName: headerParts[i]?.trim() || `列${i + 1}`
+        });
+      }
+    } else {
+      for (let i = 0; i < columnCount; i++) {
+        columns.push({
+          index: i,
+          name: `列${i + 1}`,
+          originalName: `列${i + 1}`
+        });
+      }
+    }
+
+    const data = [];
     for (let i = startIndex; i < lines.length; i++) {
       const rawLine = lines[i];
-      let parts = rawLine.split('\t');
-      if (parts.length < fieldCount) {
-        parts = parts.concat(new Array(fieldCount - parts.length).fill(''));
-      } else if (parts.length > fieldCount) {
-        const extra = parts.slice(fieldCount - 1).join(' ');
-        parts = parts.slice(0, fieldCount - 1).concat([extra]);
+      let parts = rawLine.split('\t').map((p) => (p || '').trim());
+      if (parts.length < columns.length) {
+        parts = parts.concat(new Array(columns.length - parts.length).fill(''));
       }
-      parts = parts.map((p) => (p || '').trim());
+      const row = { _id: uid() };
+      columns.forEach((col, idx) => {
+        row[`_col_${idx}`] = parts[idx] || '';
+      });
+      data.push(row);
+    }
 
+    return { columns, data };
+  }
+
+  function guessFieldMapping(columns) {
+    const mapping = {};
+    const configFields = [...BATCH_FIELDS];
+    const usedFieldKeys = new Set();
+
+    columns.forEach((col) => {
+      const colName = col.name.toLowerCase();
+      let matched = null;
+
+      for (const field of configFields) {
+        if (usedFieldKeys.has(field.key)) continue;
+        const fieldLabels = [
+          field.label.toLowerCase(),
+          field.key.toLowerCase(),
+          ...(HEADER_KEYWORDS || []).map((k) => String(k).toLowerCase())
+        ];
+        if (fieldLabels.includes(colName) || colName.includes(field.label.toLowerCase()) || colName.includes(field.key.toLowerCase())) {
+          matched = field.key;
+          usedFieldKeys.add(field.key);
+          break;
+        }
+      }
+
+      mapping[col.index] = matched || null;
+    });
+
+    return mapping;
+  }
+
+  function applyFieldMapping(rawData, columns, mapping, defaultValues) {
+    if (!rawData.length) return [];
+
+    const existingCaseNos = new Set(records.map((r) => r.caseNo));
+    const seenCaseNos = new Set();
+    const primaryStatus = getPrimaryStatusName(queueConfig);
+    const idField = BATCH_FIELDS[0]?.key || 'caseNo';
+
+    return rawData.map((rawRow) => {
       const record = {};
-      BATCH_FIELDS.forEach((field, idx) => {
-        record[field.key] = parts[idx] || '';
+
+      columns.forEach((col) => {
+        const targetField = mapping[col.index];
+        if (targetField && targetField !== '__ignore__') {
+          record[targetField] = rawRow[`_col_${col.index}`] || '';
+        }
+      });
+
+      Object.entries(defaultValues || {}).forEach(([key, value]) => {
+        if (value && (!record[key] || record[key] === '')) {
+          record[key] = value;
+        }
       });
 
       const missingRequired = BATCH_FIELDS
@@ -1196,28 +1274,62 @@ function App() {
         .filter((f) => !f.required && !record[f.key])
         .map((f) => f.label);
 
-      const idField = BATCH_FIELDS[0]?.key || 'caseNo';
       const idValue = record[idField];
       const duplicate = idValue && (existingCaseNos.has(idValue) || seenCaseNos.has(idValue));
 
       if (idValue) seenCaseNos.add(idValue);
 
-      parsed.push({
-        _id: uid(),
+      return {
+        _id: rawRow._id,
         ...record,
         status: record.status || primaryStatus,
         _missingRequired: missingRequired,
         _missingOptional: missingOptional,
         _duplicate: duplicate,
         _invalid: missingRequired.length > 0,
-      });
-    }
-
-    return parsed;
+      };
+    });
   }
 
   function handleBatchParse() {
-    const parsed = parseBatchLines(batchRaw);
+    const { columns, data } = parseRawColumns(batchRaw);
+    if (!columns.length || !data.length) {
+      setBatchParsed([]);
+      setRawParsed([]);
+      setBatchColumns([]);
+      setFieldMapping({});
+      setTempDefaultValues({});
+      return;
+    }
+
+    const initialMapping = guessFieldMapping(columns);
+    const initialDefaults = {};
+    BATCH_FIELDS.forEach((f) => {
+      if (queueConfig.defaultValues && queueConfig.defaultValues[f.key] !== undefined) {
+        initialDefaults[f.key] = queueConfig.defaultValues[f.key];
+      }
+    });
+
+    setBatchColumns(columns);
+    setRawParsed(data);
+    setFieldMapping(initialMapping);
+    setTempDefaultValues(initialDefaults);
+
+    const parsed = applyFieldMapping(data, columns, initialMapping, initialDefaults);
+    setBatchParsed(parsed);
+  }
+
+  function handleFieldMappingChange(colIndex, fieldKey) {
+    const newMapping = { ...fieldMapping, [colIndex]: fieldKey };
+    setFieldMapping(newMapping);
+    const parsed = applyFieldMapping(rawParsed, batchColumns, newMapping, tempDefaultValues);
+    setBatchParsed(parsed);
+  }
+
+  function handleDefaultValueChange(fieldKey, value) {
+    const newDefaults = { ...tempDefaultValues, [fieldKey]: value };
+    setTempDefaultValues(newDefaults);
+    const parsed = applyFieldMapping(rawParsed, batchColumns, fieldMapping, newDefaults);
     setBatchParsed(parsed);
   }
 
@@ -1252,12 +1364,20 @@ function App() {
     setBatchOpen(false);
     setBatchRaw('');
     setBatchParsed([]);
+    setRawParsed([]);
+    setBatchColumns([]);
+    setFieldMapping({});
+    setTempDefaultValues({});
   }
 
   function handleBatchClose() {
     setBatchOpen(false);
     setBatchRaw('');
     setBatchParsed([]);
+    setRawParsed([]);
+    setBatchColumns([]);
+    setFieldMapping({});
+    setTempDefaultValues({});
   }
 
   function toggleCaseSelection(caseId) {
@@ -5768,6 +5888,97 @@ function App() {
                       <span><CheckCircle2 size={14} />{batchParsed.filter((r) => !r._duplicate && !r._invalid).length} 条可导入</span>
                     )}
                   </div>
+
+                  {batchColumns.length > 0 && (
+                    <div className="field-mapping-section">
+                      <div className="field-mapping-header">
+                        <ArrowRightLeft size={16} />
+                        <h3>字段映射调整</h3>
+                        <span className="hint">将原始列映射到目标字段，可忽略不需要的列或设置默认值</span>
+                      </div>
+                      <div className="field-mapping-grid">
+                        {batchColumns.map((col) => {
+                          const currentMapping = fieldMapping[col.index];
+                          const mappedField = BATCH_FIELDS.find((f) => f.key === currentMapping);
+                          const sampleValue = rawParsed[0]?.[`_col_${col.index}`] || '';
+                          const isIgnored = currentMapping === '__ignore__';
+
+                          return (
+                            <div key={col.index} className={`field-mapping-row ${isIgnored ? 'ignored' : ''}`}>
+                              <div className="source-col">
+                                <div className="col-name">{col.name}</div>
+                                {sampleValue && <div className="col-sample">示例: {sampleValue.slice(0, 20)}{sampleValue.length > 20 ? '...' : ''}</div>}
+                              </div>
+                              <div className="mapping-arrow">→</div>
+                              <div className="target-field">
+                                <select
+                                  value={currentMapping || ''}
+                                  onChange={(e) => handleFieldMappingChange(col.index, e.target.value || null)}
+                                >
+                                  <option value="">-- 不映射 --</option>
+                                  <option value="__ignore__">-- 忽略此列 --</option>
+                                  {BATCH_FIELDS.map((field) => {
+                                    const isUsed = Object.values(fieldMapping).includes(field.key) && fieldMapping[col.index] !== field.key;
+                                    return (
+                                      <option key={field.key} value={field.key} disabled={isUsed}>
+                                        {field.label}{field.required ? ' *' : ''}{isUsed ? ' (已映射)' : ''}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                                {mappedField?.required && isIgnored && (
+                                  <span className="mapping-warning">必填字段被忽略</span>
+                                )}
+                              </div>
+                              {isIgnored && <span className="ignore-badge">已忽略</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="default-values-section">
+                        <div className="default-values-header">
+                          <Edit size={14} />
+                          <h4>默认值补充</h4>
+                          <span className="hint">为缺失值的字段设置默认值</span>
+                        </div>
+                        <div className="default-values-grid">
+                          {BATCH_FIELDS.map((field) => {
+                            const isMapped = Object.values(fieldMapping).includes(field.key);
+                            const currentValue = tempDefaultValues[field.key] || '';
+
+                            return (
+                              <div key={field.key} className="default-value-row">
+                                <label className="default-value-label">
+                                  {field.label}{field.required ? ' *' : ''}
+                                  {!isMapped && <span className="not-mapped-badge">未映射</span>}
+                                </label>
+                                {field.type === 'select' && field.options?.length ? (
+                                  <select
+                                    value={currentValue}
+                                    onChange={(e) => handleDefaultValueChange(field.key, e.target.value)}
+                                    placeholder={`设置${field.label}默认值`}
+                                  >
+                                    <option value="">-- 无默认值 --</option>
+                                    {field.options.map((opt) => (
+                                      <option key={opt} value={opt}>{opt}</option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type="text"
+                                    value={currentValue}
+                                    onChange={(e) => handleDefaultValueChange(field.key, e.target.value)}
+                                    placeholder={`设置${field.label}默认值`}
+                                  />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="batch-list">
                     {batchParsed.map((r) => (

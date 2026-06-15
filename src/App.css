@@ -430,6 +430,226 @@ textarea { min-height: 76px; resize: vertical; }
   padding: 12px 20px;
 }
 
+.field-mapping-section {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  background: #f9fafb;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+}
+
+.field-mapping-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.field-mapping-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #101828;
+  margin: 0;
+}
+
+.field-mapping-header .hint {
+  font-size: 12px;
+  color: #667085;
+  margin-left: auto;
+}
+
+.field-mapping-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.field-mapping-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1.2fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid #e4e7ec;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.field-mapping-row:hover {
+  border-color: #d0d5dd;
+  background: #fafbfc;
+}
+
+.field-mapping-row.ignored {
+  opacity: 0.6;
+  background: #f2f4f7;
+}
+
+.source-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.col-name {
+  font-weight: 500;
+  font-size: 13px;
+  color: #101828;
+}
+
+.col-sample {
+  font-size: 11px;
+  color: #667085;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.mapping-arrow {
+  color: #98a2b3;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.target-field {
+  position: relative;
+}
+
+.target-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #101828;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.target-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+.target-field select:disabled {
+  background: #f2f4f7;
+  cursor: not-allowed;
+}
+
+.mapping-warning {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #dc2626;
+  white-space: nowrap;
+}
+
+.ignore-badge {
+  padding: 4px 8px;
+  background: #f2f4f7;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #667085;
+  font-weight: 500;
+}
+
+.default-values-section {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px dashed #d0d5dd;
+}
+
+.default-values-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.default-values-header h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #344054;
+  margin: 0;
+}
+
+.default-values-header .hint {
+  font-size: 11px;
+  color: #667085;
+  margin-left: auto;
+}
+
+.default-values-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.default-value-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.default-value-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #344054;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.not-mapped-badge {
+  padding: 2px 6px;
+  background: #fef3c7;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #92400e;
+  font-weight: 500;
+}
+
+.default-value-row input,
+.default-value-row select {
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #101828;
+  background: #ffffff;
+  transition: border-color 0.2s ease;
+}
+
+.default-value-row input:focus,
+.default-value-row select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+
+@media (max-width: 640px) {
+  .field-mapping-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .mapping-arrow {
+    display: none;
+  }
+
+  .ignore-badge {
+    justify-self: start;
+  }
+
+  .default-values-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .workbench {
   margin-top: 18px;
   background: #ffffff;
