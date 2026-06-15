@@ -12,19 +12,19 @@ function deepClone(obj) {
   }
 }
 
-function ensureArray(value, fallback = []) {
+export function ensureArray(value, fallback = []) {
   return Array.isArray(value) ? value : fallback;
 }
 
-function ensureObject(value, fallback = {}) {
+export function ensureObject(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
 
-function ensureString(value, fallback = '') {
+export function ensureString(value, fallback = '') {
   return typeof value === 'string' ? value : fallback;
 }
 
-function ensureNumber(value, fallback = 0) {
+export function ensureNumber(value, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 

@@ -256,6 +256,8 @@ export const DEFAULT_QUEUE_CONFIG = {
 };
 
 export const QUEUE_CONFIG_STORAGE = 'hxwl-61306-queue-config';
+export const VIEW_STORAGE_KEY = 'hxwl-61306-views';
+export const ACTIVE_VIEW_STORAGE_KEY = 'hxwl-61306-active-view';
 
 export const FIELD_TYPES = ['input', 'select', 'textarea', 'datetime-local', 'number', 'date'];
 

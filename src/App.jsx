@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown, ArrowUpCircle } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown, ArrowUpCircle, RefreshCw } from 'lucide-react';
 import {
   TabSync,
   mergeBorrowRecord,
@@ -28,6 +28,17 @@ import {
   getStatusColor,
   uid as uidFn
 } from './config/configManager';
+import {
+  loadViews,
+  loadActiveViewId,
+  createView,
+  updateView,
+  deleteView,
+  getViewById,
+  migrateAllViews,
+  ViewSync,
+  sanitizeView
+} from './config/viewManager';
 import './App.css';
 
 const INITIAL_CONFIG = sanitizeConfig(loadConfig());
@@ -37,7 +48,7 @@ const ICON_MAP = {
   FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save,
   UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home,
   CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail,
-  Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff
+  Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, RefreshCw
 };
 
 function safeGetIcon(iconName) {
@@ -880,8 +891,9 @@ function applyFiltersFromConfig(records, config, filterState) {
   });
 }
 
-function buildSortFnFromConfig(config) {
-  const { primaryField, secondaryField, direction = 'asc' } = config.sortConfig || {};
+function buildSortFnFromConfig(config, overrideSortConfig) {
+  const sortConfig = overrideSortConfig || config.sortConfig || {};
+  const { primaryField, secondaryField, direction = 'asc' } = sortConfig;
   const dateField = config.fields?.find((f) => f.dateKey)?.key || 'sentAt';
   const dirMultiplier = direction === 'asc' ? 1 : -1;
   const priorityField = config.priorityConfig?.fieldKey || 'priority';
@@ -1002,9 +1014,51 @@ function App() {
   const [phrasePickerTarget, setPhrasePickerTarget] = useState(null);
   const [showPhrasePicker, setShowPhrasePicker] = useState(false);
 
+  const [views, setViews] = useState(() => loadViews(INITIAL_CONFIG));
+  const [activeViewId, setActiveViewId] = useState(() => loadActiveViewId() || 'v_default_all');
+  const [collapsedZones, setCollapsedZones] = useState([]);
+  const viewSyncRef = useRef(null);
+  const [showSaveViewModal, setShowSaveViewModal] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
+  const [editingViewId, setEditingViewId] = useState(null);
+  const [viewDeleteConfirm, setViewDeleteConfirm] = useState(null);
+  const [sortConfig, setSortConfig] = useState(() => ({ ...INITIAL_CONFIG.sortConfig }));
+
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const viewSync = new ViewSync({
+      onViewsUpdate: (externalViews) => {
+        const sanitized = externalViews.map((v) => sanitizeView(v, queueConfig)).filter(Boolean);
+        setViews(sanitized);
+      },
+      onActiveViewChange: (externalViewId) => {
+        if (externalViewId && externalViewId !== activeViewId) {
+          setActiveViewId(externalViewId);
+          const view = getViewById(views, externalViewId);
+          if (view) {
+            applyViewToState(view);
+          }
+        }
+      }
+    });
+    viewSync.init();
+    viewSyncRef.current = viewSync;
+
+    return () => {
+      viewSync.destroy();
+    };
+  }, [queueConfig]);
+
+  useEffect(() => {
+    const initialActiveViewId = loadActiveViewId() || 'v_default_all';
+    const view = getViewById(views, initialActiveViewId) || views[0];
+    if (view) {
+      applyViewToState(view);
+    }
   }, []);
 
   useEffect(() => {
@@ -1149,6 +1203,7 @@ function App() {
   }, [queueConfig.filters]);
 
   function handleConfigSave(newConfig) {
+    const oldConfig = queueConfig;
     const sanitized = sanitizeConfig(newConfig);
     const fieldKeyRenames = getFieldKeyRenames(queueConfig, sanitized);
     setQueueConfig(sanitized);
@@ -1166,6 +1221,137 @@ function App() {
     });
     localStorage.setItem(sanitized.storage || INITIAL_CONFIG.storage,
       localStorage.getItem(sanitized.storage || INITIAL_CONFIG.storage) || '[]');
+
+    const migratedViews = migrateAllViews(oldConfig, sanitized);
+    setViews(migratedViews);
+    if (viewSyncRef.current) {
+      viewSyncRef.current.persistViews(migratedViews, sanitized);
+    }
+  }
+
+  function applyViewToState(view) {
+    if (!view) return;
+
+    if (view.filters) {
+      const mergedFilters = { ...buildInitialFiltersState(queueConfig), ...view.filters };
+      setFilters(mergedFilters);
+    }
+
+    if (view.sortConfig) {
+      setSortConfig({ ...view.sortConfig });
+    }
+
+    if (view.activeView) {
+      setActiveView(view.activeView);
+    }
+
+    if (view.collapsedZones) {
+      setCollapsedZones([...view.collapsedZones]);
+    }
+  }
+
+  function handleViewChange(viewId) {
+    const view = getViewById(views, viewId);
+    if (!view) return;
+
+    setActiveViewId(viewId);
+    applyViewToState(view);
+
+    if (viewSyncRef.current) {
+      viewSyncRef.current.persistActiveView(viewId);
+    }
+  }
+
+  function handleViewChangeType(viewType) {
+    setActiveView(viewType);
+
+    if (activeViewId) {
+      const currentState = {
+        filters: filters,
+        sortConfig: sortConfig,
+        activeView: viewType,
+        collapsedZones: collapsedZones
+      };
+      const nextViews = updateView(activeViewId, currentState, views, queueConfig);
+      setViews(nextViews);
+      if (viewSyncRef.current) {
+        viewSyncRef.current.persistViews(nextViews, queueConfig);
+      }
+    }
+  }
+
+  function handleSaveCurrentView(name) {
+    const currentState = {
+      filters: filters,
+      sortConfig: sortConfig,
+      activeView: activeView,
+      collapsedZones: collapsedZones
+    };
+
+    let nextViews;
+    if (editingViewId) {
+      nextViews = updateView(editingViewId, { name, ...currentState }, views, queueConfig);
+    } else {
+      const newView = createView(name, currentState, queueConfig);
+      nextViews = [...views, newView];
+    }
+
+    setViews(nextViews);
+    if (viewSyncRef.current) {
+      viewSyncRef.current.persistViews(nextViews, queueConfig);
+    }
+
+    setShowSaveViewModal(false);
+    setNewViewName('');
+    setEditingViewId(null);
+  }
+
+  function handleOpenSaveViewModal(viewId = null) {
+    if (viewId) {
+      const view = getViewById(views, viewId);
+      if (view) {
+        setNewViewName(view.name);
+        setEditingViewId(viewId);
+      }
+    } else {
+      setNewViewName('');
+      setEditingViewId(null);
+    }
+    setShowSaveViewModal(true);
+  }
+
+  function handleDeleteView(viewId) {
+    const result = deleteView(viewId, views, activeViewId);
+    setViews(result.views);
+    setActiveViewId(result.activeViewId);
+
+    if (result.activeViewId !== activeViewId) {
+      const view = getViewById(result.views, result.activeViewId);
+      if (view) {
+        applyViewToState(view);
+      }
+    }
+
+    if (viewSyncRef.current) {
+      viewSyncRef.current.persistViews(result.views, queueConfig);
+      viewSyncRef.current.persistActiveView(result.activeViewId);
+    }
+
+    setViewDeleteConfirm(null);
+  }
+
+  function handleResetView(viewId) {
+    const currentState = {
+      filters: filters,
+      sortConfig: sortConfig,
+      activeView: activeView,
+      collapsedZones: collapsedZones
+    };
+    const nextViews = updateView(viewId, currentState, views, queueConfig);
+    setViews(nextViews);
+    if (viewSyncRef.current) {
+      viewSyncRef.current.persistViews(nextViews, queueConfig);
+    }
   }
 
   useEffect(() => {
@@ -2827,10 +3013,10 @@ function App() {
   }
 
   const filteredRecords = useMemo(() => {
-    const sortFn = buildSortFnFromConfig(queueConfig);
+    const sortFn = buildSortFnFromConfig(queueConfig, sortConfig);
     const filtered = applyFiltersFromConfig(records, queueConfig, filters);
     return filtered.sort(sortFn);
-  }, [records, filters, queueConfig]);
+  }, [records, filters, queueConfig, sortConfig]);
 
   const metrics = useMemo(() => {
     return (queueConfig.metrics || [])
@@ -3189,31 +3375,96 @@ function App() {
         </div>
       </section>
 
+      <section className="view-manager">
+        <div className="view-manager-header">
+          <div className="view-manager-label">
+            <Layers size={14} />
+            <span>工作视图</span>
+          </div>
+          <div className="view-manager-actions">
+            <button
+              className="vm-btn vm-btn-secondary"
+              type="button"
+              onClick={() => handleOpenSaveViewModal()}
+              title="保存当前视图"
+            >
+              <Save size={14} />
+              保存视图
+            </button>
+          </div>
+        </div>
+        <div className="view-tabs-scroll">
+          <div className="view-tabs-row">
+            {views.map((view) => {
+              const ViewIcon = safeGetIcon(view.icon);
+              const isActive = activeViewId === view.id;
+              const isDefault = view.id.startsWith('v_default_');
+              return (
+                <div
+                  key={view.id}
+                  className={`view-pill ${isActive ? 'active' : ''}`}
+                >
+                  <button
+                    className="view-pill-btn"
+                    type="button"
+                    onClick={() => handleViewChange(view.id)}
+                    title={view.name}
+                  >
+                    <ViewIcon size={14} />
+                    <span>{view.name}</span>
+                  </button>
+                  <div className="view-pill-actions">
+                    <button
+                      className="vm-icon-btn"
+                      type="button"
+                      onClick={() => handleResetView(view.id)}
+                      title="更新为当前状态"
+                    >
+                      <RefreshCw size={12} />
+                    </button>
+                    {!isDefault && (
+                      <button
+                        className="vm-icon-btn vm-icon-danger"
+                        type="button"
+                        onClick={() => setViewDeleteConfirm(view.id)}
+                        title="删除视图"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
       <section className="view-tabs">
         <button
           className={`view-tab ${activeView === 'workbench' ? 'active' : ''}`}
-          onClick={() => handleViewChange('workbench')}
+          onClick={() => handleViewChangeType('workbench')}
         >
           <Layers size={16} />
           阅片工作台
         </button>
         <button
           className={`view-tab ${activeView === 'dispatch' ? 'active' : ''}`}
-          onClick={() => handleViewChange('dispatch')}
+          onClick={() => handleViewChangeType('dispatch')}
         >
           <UserPlus size={16} />
           医生派单与负荷
         </button>
         <button
           className={`view-tab ${activeView === 'slide-borrow' ? 'active' : ''}`}
-          onClick={() => handleViewChange('slide-borrow')}
+          onClick={() => handleViewChangeType('slide-borrow')}
         >
           <BookOpen size={16} />
           玻片借阅归还
         </button>
         <button
           className={`view-tab ${activeView === 'critical-notify' ? 'active' : ''}`}
-          onClick={() => handleViewChange('critical-notify')}
+          onClick={() => handleViewChangeType('critical-notify')}
         >
           <BellRing size={16} />
           危急病例通知
@@ -3223,7 +3474,7 @@ function App() {
         </button>
         <button
           className={`view-tab ${activeView === 'phrase-library' ? 'active' : ''}`}
-          onClick={() => handleViewChange('phrase-library')}
+          onClick={() => handleViewChangeType('phrase-library')}
         >
           <BookOpen size={16} />
           诊断短语库
@@ -6471,6 +6722,89 @@ function App() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveViewModal && (
+        <div className="vm-modal-overlay" onClick={() => setShowSaveViewModal(false)}>
+          <div className="vm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vm-modal-header">
+              <h3>{editingViewId ? '更新视图' : '保存当前视图'}</h3>
+              <button className="vm-icon-btn" type="button" onClick={() => setShowSaveViewModal(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="vm-modal-body">
+              <label className="vm-form-field">
+                <span className="vm-form-label">视图名称</span>
+                <input
+                  type="text"
+                  value={newViewName}
+                  onChange={(e) => setNewViewName(e.target.value)}
+                  placeholder="请输入视图名称"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newViewName.trim()) {
+                      handleSaveCurrentView(newViewName.trim());
+                    }
+                  }}
+                />
+              </label>
+              <div className="vm-hint-block">
+                <Info size={14} />
+                <p>将保存当前的筛选条件、排序方式、视图类型和看板折叠状态。</p>
+              </div>
+            </div>
+            <div className="vm-modal-footer">
+              <button
+                className="vm-btn vm-btn-secondary"
+                type="button"
+                onClick={() => setShowSaveViewModal(false)}
+              >
+                取消
+              </button>
+              <button
+                className="vm-btn vm-btn-primary"
+                type="button"
+                onClick={() => newViewName.trim() && handleSaveCurrentView(newViewName.trim())}
+                disabled={!newViewName.trim()}
+              >
+                <Save size={14} />
+                {editingViewId ? '更新' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewDeleteConfirm && (
+        <div className="vm-modal-overlay" onClick={() => setViewDeleteConfirm(null)}>
+          <div className="vm-modal vm-modal-small" onClick={(e) => e.stopPropagation()}>
+            <div className="vm-modal-header">
+              <div className="vm-modal-icon"><AlertTriangle size={28} /></div>
+              <h3>确认删除视图？</h3>
+            </div>
+            <div className="vm-modal-body">
+              <p>确定要删除视图「{getViewById(views, viewDeleteConfirm)?.name || ''}」吗？此操作无法撤销。</p>
+            </div>
+            <div className="vm-modal-footer">
+              <button
+                className="vm-btn vm-btn-secondary"
+                type="button"
+                onClick={() => setViewDeleteConfirm(null)}
+              >
+                取消
+              </button>
+              <button
+                className="vm-btn vm-btn-danger"
+                type="button"
+                onClick={() => handleDeleteView(viewDeleteConfirm)}
+              >
+                <Trash2 size={14} />
+                删除
+              </button>
             </div>
           </div>
         </div>
