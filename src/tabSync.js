@@ -1,10 +1,29 @@
 const TAB_SYNC_PREFIX = '__tab_sync__';
 const TAB_HEARTBEAT_KEY = TAB_SYNC_PREFIX + 'heartbeat';
+const TAB_ID_KEY = TAB_SYNC_PREFIX + 'tab_id';
 const HEARTBEAT_INTERVAL = 5000;
 const TAB_TIMEOUT = 15000;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
+function getSharedTabId() {
+  let sharedId = null;
+  try {
+    sharedId = sessionStorage.getItem(TAB_ID_KEY);
+  } catch {}
+  if (!sharedId) {
+    sharedId = uid();
+    try {
+      sessionStorage.setItem(TAB_ID_KEY, sharedId);
+    } catch {}
+  }
+  return sharedId;
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 export function computeRecordMap(records) {
@@ -92,6 +111,27 @@ export function mergeReviews(localReviews, externalReviews) {
   return ordered;
 }
 
+function isDefined(val) {
+  return val !== undefined && val !== null;
+}
+
+function mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime) {
+  for (const field of scalarFields) {
+    const hasLocal = hasOwn(localRecord, field) && isDefined(localRecord[field]);
+    const hasExt = hasOwn(externalRecord, field) && isDefined(externalRecord[field]);
+    const localVal = localRecord[field];
+    const extVal = externalRecord[field];
+
+    if (hasLocal && hasExt && localVal !== extVal) {
+      result[field] = localTime >= externalTime ? localVal : extVal;
+    } else if (hasLocal && !hasExt) {
+      result[field] = localVal;
+    } else if (!hasLocal && hasExt) {
+      result[field] = extVal;
+    }
+  }
+}
+
 export function mergeCaseRecord(localRecord, externalRecord) {
   if (!localRecord) return { ...externalRecord };
   if (!externalRecord) return { ...localRecord };
@@ -116,17 +156,7 @@ export function mergeCaseRecord(localRecord, externalRecord) {
   const scalarFields = ['caseNo', 'sampleType', 'priority', 'sentAt', 'doctor', 'summary'];
   const result = { ...externalRecord };
 
-  for (const field of scalarFields) {
-    const localVal = localRecord[field];
-    const extVal = externalRecord[field];
-    if (localVal && extVal && localVal !== extVal) {
-      result[field] = localTime >= externalTime ? localVal : extVal;
-    } else if (localVal && !extVal) {
-      result[field] = localVal;
-    } else if (!localVal && extVal) {
-      result[field] = extVal;
-    }
-  }
+  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || '';
   const externalCreatedAt = externalRecord.createdAt || '';
@@ -168,17 +198,7 @@ export function mergeBorrowRecord(localRecord, externalRecord) {
   ];
   const result = { ...externalRecord };
 
-  for (const field of scalarFields) {
-    const localVal = localRecord[field];
-    const extVal = externalRecord[field];
-    if (localVal && extVal && localVal !== extVal) {
-      result[field] = localTime >= externalTime ? localVal : extVal;
-    } else if (localVal && !extVal) {
-      result[field] = localVal;
-    } else if (!localVal && extVal) {
-      result[field] = extVal;
-    }
-  }
+  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || localRecord.borrowTime || '';
   const externalCreatedAt = externalRecord.createdAt || externalRecord.borrowTime || '';
@@ -216,17 +236,7 @@ export function mergeNotifyRecord(localRecord, externalRecord) {
   ];
   const result = { ...externalRecord };
 
-  for (const field of scalarFields) {
-    const localVal = localRecord[field];
-    const extVal = externalRecord[field];
-    if (localVal && extVal && localVal !== extVal) {
-      result[field] = localTime >= externalTime ? localVal : extVal;
-    } else if (localVal && !extVal) {
-      result[field] = localVal;
-    } else if (!localVal && extVal) {
-      result[field] = extVal;
-    }
-  }
+  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
 
   const localCreatedAt = localRecord.createdAt || localRecord.sentAt || '';
   const externalCreatedAt = externalRecord.createdAt || externalRecord.sentAt || '';
@@ -254,17 +264,7 @@ export function mergePhraseRecord(localRecord, externalRecord) {
   const scalarFields = ['phrase', 'sampleType', 'pinned', 'pinnedAt', 'lastUsedAt'];
   const result = { ...externalRecord };
 
-  for (const field of scalarFields) {
-    const localVal = localRecord[field];
-    const extVal = externalRecord[field];
-    if (localVal && extVal && localVal !== extVal) {
-      result[field] = localTime >= externalTime ? localVal : extVal;
-    } else if (localVal && !extVal) {
-      result[field] = localVal;
-    } else if (!localVal && extVal) {
-      result[field] = extVal;
-    }
-  }
+  mergeScalarFields(result, localRecord, externalRecord, scalarFields, localTime, externalTime);
 
   result.useCount = Math.max(
     Number(localRecord.useCount) || 0,
@@ -485,7 +485,7 @@ export function resolveConflict(strategy, localRecords, externalRecords, baseRec
 export class TabSync {
   constructor(storageKey, options = {}) {
     this.storageKey = storageKey;
-    this.tabId = uid();
+    this.tabId = getSharedTabId();
     this.onExternalUpdate = options.onExternalUpdate || (() => {});
     this.onConflict = options.onConflict || (() => {});
     this.onTabListChange = options.onTabListChange || (() => {});
