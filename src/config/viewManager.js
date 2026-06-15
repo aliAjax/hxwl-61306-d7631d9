@@ -82,7 +82,7 @@ export function sanitizeView(rawView, config) {
     direction: ['asc', 'desc'].includes(sortConfig.direction) ? sortConfig.direction : 'asc'
   };
 
-  const viewTypes = ['workbench', 'table', 'kanban'];
+  const viewTypes = ['workbench', 'table', 'kanban', 'dispatch', 'slide-borrow', 'critical-notify', 'phrase-library'];
   const activeView = viewTypes.includes(rawView.activeView) ? rawView.activeView : 'workbench';
 
   const collapsedZones = ensureArray(rawView.collapsedZones, [])
@@ -224,21 +224,8 @@ export function loadViews(config) {
       return createDefaultViews(currentConfig);
     }
 
-    const storedConfigRaw = localStorage.getItem(QUEUE_CONFIG_STORAGE);
-    let storedConfig = null;
-    if (storedConfigRaw) {
-      try {
-        storedConfig = JSON.parse(storedConfigRaw);
-      } catch {}
-    }
-
     return parsed
-      .map((view) => {
-        if (storedConfig && view.configVersion !== currentConfig.version) {
-          return migrateView(view, storedConfig, currentConfig);
-        }
-        return sanitizeView(view, currentConfig);
-      })
+      .map((view) => sanitizeView(view, currentConfig))
       .filter(Boolean);
   } catch (error) {
     console.error('[ViewManager] Failed to load views:', error);
@@ -403,8 +390,7 @@ export function getViewById(views, viewId) {
   return views.find((v) => v.id === viewId) || null;
 }
 
-export function migrateAllViews(oldConfig, newConfig) {
-  const views = loadViews(newConfig);
+export function migrateAllViews(views, oldConfig, newConfig) {
   const migrated = views.map((view) => migrateView(view, oldConfig, newConfig));
   return persistViews(migrated, newConfig);
 }

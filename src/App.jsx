@@ -1018,11 +1018,26 @@ function App() {
   const [activeViewId, setActiveViewId] = useState(() => loadActiveViewId() || 'v_default_all');
   const [collapsedZones, setCollapsedZones] = useState([]);
   const viewSyncRef = useRef(null);
+  const viewsRef = useRef(views);
+  const activeViewIdRef = useRef(activeViewId);
+  const queueConfigRef = useRef(queueConfig);
   const [showSaveViewModal, setShowSaveViewModal] = useState(false);
   const [newViewName, setNewViewName] = useState('');
   const [editingViewId, setEditingViewId] = useState(null);
   const [viewDeleteConfirm, setViewDeleteConfirm] = useState(null);
   const [sortConfig, setSortConfig] = useState(() => ({ ...INITIAL_CONFIG.sortConfig }));
+
+  useEffect(() => {
+    viewsRef.current = views;
+  }, [views]);
+
+  useEffect(() => {
+    activeViewIdRef.current = activeViewId;
+  }, [activeViewId]);
+
+  useEffect(() => {
+    queueConfigRef.current = queueConfig;
+  }, [queueConfig]);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 60000);
@@ -1032,13 +1047,16 @@ function App() {
   useEffect(() => {
     const viewSync = new ViewSync({
       onViewsUpdate: (externalViews) => {
-        const sanitized = externalViews.map((v) => sanitizeView(v, queueConfig)).filter(Boolean);
+        const currentConfig = queueConfigRef.current;
+        const sanitized = externalViews.map((v) => sanitizeView(v, currentConfig)).filter(Boolean);
         setViews(sanitized);
       },
       onActiveViewChange: (externalViewId) => {
-        if (externalViewId && externalViewId !== activeViewId) {
+        const currentActiveViewId = activeViewIdRef.current;
+        const currentViews = viewsRef.current;
+        if (externalViewId && externalViewId !== currentActiveViewId) {
           setActiveViewId(externalViewId);
-          const view = getViewById(views, externalViewId);
+          const view = getViewById(currentViews, externalViewId);
           if (view) {
             applyViewToState(view);
           }
@@ -1051,12 +1069,13 @@ function App() {
     return () => {
       viewSync.destroy();
     };
-  }, [queueConfig]);
+  }, []);
 
   useEffect(() => {
     const initialActiveViewId = loadActiveViewId() || 'v_default_all';
     const view = getViewById(views, initialActiveViewId) || views[0];
     if (view) {
+      setActiveViewId(view.id);
       applyViewToState(view);
     }
   }, []);
@@ -1222,7 +1241,7 @@ function App() {
     localStorage.setItem(sanitized.storage || INITIAL_CONFIG.storage,
       localStorage.getItem(sanitized.storage || INITIAL_CONFIG.storage) || '[]');
 
-    const migratedViews = migrateAllViews(oldConfig, sanitized);
+    const migratedViews = migrateAllViews(views, oldConfig, sanitized);
     setViews(migratedViews);
     if (viewSyncRef.current) {
       viewSyncRef.current.persistViews(migratedViews, sanitized);
@@ -1926,7 +1945,7 @@ function App() {
     setShowDispatchConfirm(false);
   }
 
-  function handleViewChange(view) {
+  function handleFeatureViewChange(view) {
     setActiveView(view);
     setSelectedCases(new Set());
     setSelectedDoctor('');
