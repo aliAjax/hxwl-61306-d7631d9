@@ -21,7 +21,7 @@ import {
   notifyStatusClass as notifyStatusClassFn,
   confirmNotifyRecord,
   createEscalateNotify,
-  removeNotifyRecord
+  removeNotifyRecord as removeNotifyRecordPure
 } from './criticalNotify';
 
 export { notifyStatusClassFn as notifyStatusClass };
@@ -193,6 +193,14 @@ export function useCriticalNotify(tick, { onConflict } = {}) {
       setEscalateWarning('');
     }
     return isDuplicate;
+  }
+
+  function removeNotifyRecord(id) {
+    const next = removeNotifyRecordPure(id, criticalNotifies);
+    persistCriticalNotifies(next);
+    if (selectedNotifyForDetail?.id === id) {
+      setSelectedNotifyForDetail(null);
+    }
   }
 
   function getCaseNotifies(caseNo, caseId) {
