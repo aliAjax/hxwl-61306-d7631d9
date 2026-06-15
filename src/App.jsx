@@ -1158,8 +1158,23 @@ function App() {
     key: f.key, label: f.label, required: !!f.required
   }));
 
+  const BATCH_FIELD_DETAILS = BATCH_FIELDS.map((field) => ({
+    ...(queueConfig.fields.find((f) => f.key === field.key) || {}),
+    ...field
+  }));
+
   const HEADER_KEYWORDS = queueConfig.batchImport?.headerKeywords ||
     queueConfig.fields.flatMap((f) => [f.label, f.key.toLowerCase()]);
+
+  function fieldHeaderLabels(field) {
+    return [
+      field.label,
+      field.key,
+      field.key?.toLowerCase()
+    ]
+      .filter(Boolean)
+      .map((label) => String(label).toLowerCase());
+  }
 
   function looksLikeDataCell(value, field) {
     const v = (value || '').trim();
@@ -1185,13 +1200,9 @@ function App() {
     const secondLine = lines[1] || '';
     const secondParts = secondLine.split('\t').map((p) => p.trim());
 
-    const fieldLabels = BATCH_FIELDS.map((f) => ({
+    const fieldLabels = BATCH_FIELD_DETAILS.map((f) => ({
       key: f.key,
-      labels: new Set([
-        f.label.toLowerCase(),
-        f.key.toLowerCase(),
-        ...(HEADER_KEYWORDS || []).map((k) => String(k).toLowerCase())
-      ])
+      labels: new Set(fieldHeaderLabels(f))
     }));
 
     let exactHeaderMatches = 0;
@@ -1208,7 +1219,7 @@ function App() {
 
     let exactDataMatches = 0;
     secondParts.forEach((part, idx) => {
-      const field = BATCH_FIELDS[idx];
+      const field = BATCH_FIELD_DETAILS[idx];
       if (!field) return;
       if (looksLikeDataCell(part, field)) exactDataMatches++;
     });
@@ -1218,9 +1229,7 @@ function App() {
 
     let hasHeader = false;
     if (exactHeaderMatches >= Math.min(2, partCount) && headerMatchRatio >= 0.5) {
-      if (dataMatchRatio < 0.5 || exactHeaderMatches > exactDataMatches) {
-        hasHeader = true;
-      }
+      hasHeader = true;
     }
     if (partCount <= 2 && exactHeaderMatches >= 1 && dataMatchRatio < 0.5) {
       hasHeader = true;
@@ -1252,7 +1261,7 @@ function App() {
       }
     } else {
       for (let i = 0; i < columnCount; i++) {
-        const fieldAtPos = BATCH_FIELDS[i];
+        const fieldAtPos = BATCH_FIELD_DETAILS[i];
         columns.push({
           index: i,
           name: fieldAtPos ? `${fieldAtPos.label} (列${i + 1})` : `列${i + 1}`,
@@ -1280,7 +1289,7 @@ function App() {
 
   function guessFieldMapping(columns, hasHeader) {
     const mapping = {};
-    const configFields = [...BATCH_FIELDS];
+    const configFields = [...BATCH_FIELD_DETAILS];
     const usedFieldKeys = new Set();
 
     if (!hasHeader) {
@@ -1299,11 +1308,7 @@ function App() {
 
       for (const field of configFields) {
         if (usedFieldKeys.has(field.key)) continue;
-        const fieldLabels = [
-          field.label.toLowerCase(),
-          field.key.toLowerCase(),
-          ...(HEADER_KEYWORDS || []).map((k) => String(k).toLowerCase())
-        ];
+        const fieldLabels = fieldHeaderLabels(field);
 
         let score = 0;
         for (const label of fieldLabels) {
