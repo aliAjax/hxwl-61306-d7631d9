@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown } from 'lucide-react';
+import { Microscope, Plus, Search, Trash2, RotateCcw, CheckCircle2, AlertTriangle, ClipboardList, CalendarDays, FileUp, X, AlertCircle, Clock, Zap, Eye, ShieldCheck, CircleCheckBig, Stethoscope, FileCheck, Edit, Save, User, UserCheck, Users, Send, CheckSquare, Square, Layers, UserPlus, Info, BookOpen, ArrowRightLeft, Home, CornerDownRight, FileText, Building2, CalendarClock, Undo2, Bell, BellRing, Phone, MessageSquare, Mail, Megaphone, HandHeart, Timer, Radio, Settings, CircleDot, Pin, PinOff, ChevronDown, ArrowUpCircle } from 'lucide-react';
 import { TabSync } from './tabSync';
 import { ConfigManager } from './components/ConfigManager';
 import {
@@ -112,6 +112,8 @@ const NOTIFY_TARGET_PRESETS = ['临床主管医生', '科室主任', '病理科�
 const NOTIFY_DUPLICATE_WINDOW_MINUTES = 30;
 const NOTIFY_REMINDER_MINUTES = 15;
 const NOTIFY_EXPIRE_HOURS = 24;
+const NOTIFY_ESCALATE_WINDOW_MINUTES = 30;
+const NOTIFY_ESCALATE_TARGETS = ['科室主任', '医务科'];
 
 const CRITICAL_NOTIFY_SEED = [
   {
@@ -309,6 +311,30 @@ function hasDuplicateUnconfirmedNotify(caseId, caseNo, notifyTarget, notifies) {
     const sentTime = new Date(n.sentAt || n.createdAt).getTime();
     return now - sentTime < windowMs;
   });
+}
+
+function canEscalateNotify(item) {
+  if (!item) return false;
+  if (item.confirmedAt) return false;
+  return isNotifyOverdue(item);
+}
+
+function hasRecentEscalation(caseId, caseNo, escalateTarget, notifies, windowMinutes = NOTIFY_ESCALATE_WINDOW_MINUTES) {
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  return notifies.some((n) => {
+    const caseMatch = (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo);
+    if (!caseMatch) return false;
+    if (n.notifyTarget !== escalateTarget) return false;
+    if (!n.isEscalation) return false;
+    const escalateTime = new Date(n.sentAt || n.createdAt).getTime();
+    return now - escalateTime < windowMs;
+  });
+}
+
+function getNotifyEscalations(notifyId, notifies) {
+  if (!notifyId) return [];
+  return notifies.filter((n) => n.parentNotifyId === notifyId);
 }
 
 function isCriticalNotifyEligible(config, record) {
@@ -919,6 +945,15 @@ function App() {
   });
   const [selectedNotifyForDetail, setSelectedNotifyForDetail] = useState(null);
   const [notifyDuplicateWarning, setNotifyDuplicateWarning] = useState('');
+  const [showEscalateModal, setShowEscalateModal] = useState(false);
+  const [escalateSourceNotify, setEscalateSourceNotify] = useState(null);
+  const [escalateForm, setEscalateForm] = useState({
+    escalateTarget: '科室主任',
+    notifyMethod: '电话',
+    sentAt: '',
+    remark: ''
+  });
+  const [escalateWarning, setEscalateWarning] = useState('');
   const [phrases, setPhrases] = useState(loadPhrases);
   const [phraseFilters, setPhraseFilters] = useState({ query: '', sampleType: '全部' });
   const [showPhraseModal, setShowPhraseModal] = useState(false);
@@ -1684,6 +1719,111 @@ function App() {
     }
   }
 
+  function openEscalateModal(notifyItem) {
+    if (!canEscalateNotify(notifyItem)) return;
+    setEscalateSourceNotify(notifyItem);
+    setEscalateForm({
+      escalateTarget: '科室主任',
+      notifyMethod: '电话',
+      sentAt: new Date().toISOString().slice(0, 16),
+      remark: `原通知对象「${notifyItem.notifyTarget}」未在规定时间内确认，已升级通知。`
+    });
+    setEscalateWarning('');
+    setShowEscalateModal(true);
+    setTimeout(() => {
+      checkEscalateDuplicate();
+    }, 50);
+  }
+
+  function closeEscalateModal() {
+    setShowEscalateModal(false);
+    setEscalateSourceNotify(null);
+    setEscalateWarning('');
+  }
+
+  function checkEscalateDuplicate() {
+    if (!escalateSourceNotify || !escalateForm.escalateTarget) {
+      setEscalateWarning('');
+      return false;
+    }
+    const isDuplicate = hasRecentEscalation(
+      escalateSourceNotify.caseId,
+      escalateSourceNotify.caseNo,
+      escalateForm.escalateTarget,
+      criticalNotifies
+    );
+    if (isDuplicate) {
+      setEscalateWarning(`该病例在${NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内已向「${escalateForm.escalateTarget}」发送过升级通知，请勿重复升级`);
+    } else {
+      setEscalateWarning('');
+    }
+    return isDuplicate;
+  }
+
+  function handleEscalateSubmit(e) {
+    e.preventDefault();
+    if (!escalateSourceNotify) return;
+    if (!escalateForm.escalateTarget.trim() || !escalateForm.sentAt) return;
+    if (checkEscalateDuplicate()) return;
+
+    const now = new Date().toISOString();
+    const caseNo = escalateSourceNotify.caseNo;
+    const caseRecord = records.find((r) => r.caseNo === caseNo || r.id === escalateSourceNotify.caseId);
+    const priority = caseRecord?.priority || escalateSourceNotify.priority || '常规';
+
+    const newEscalateNotify = {
+      id: uid(),
+      caseId: escalateSourceNotify.caseId,
+      caseNo,
+      notifyTarget: escalateForm.escalateTarget.trim(),
+      notifyMethod: escalateForm.notifyMethod,
+      sentAt: escalateForm.sentAt,
+      confirmedAt: '',
+      confirmedBy: '',
+      remark: escalateForm.remark.trim(),
+      triggerReason: '通知升级',
+      priority,
+      createdAt: now,
+      isEscalation: true,
+      parentNotifyId: escalateSourceNotify.id
+    };
+
+    const nextNotifies = [newEscalateNotify, ...criticalNotifies];
+    persistCriticalNotifies(nextNotifies);
+
+    if (caseRecord) {
+      const updatedRecords = records.map((item) => {
+        if (item.id === caseRecord.id) {
+          return {
+            ...item,
+            timeline: [
+              ...(item.timeline || []),
+              {
+                type: 'critical-notify-escalated',
+                event: '通知升级',
+                at: formatDateShort(escalateForm.sentAt),
+                by: '系统',
+                changedAt: escalateForm.sentAt,
+                notifyId: newEscalateNotify.id,
+                parentNotifyId: escalateSourceNotify.id,
+                notifyTarget: newEscalateNotify.notifyTarget,
+                notifyMethod: newEscalateNotify.notifyMethod,
+                fromTarget: escalateSourceNotify.notifyTarget,
+                triggerReason: '通知升级'
+              }
+            ]
+          };
+        }
+        return item;
+      });
+      persist(updatedRecords);
+      if (selected?.id === caseRecord.id) {
+        setSelected(updatedRecords.find((r) => r.id === caseRecord.id));
+      }
+    }
+    closeEscalateModal();
+  }
+
   function getCaseNotifies(caseNo, caseId) {
     return criticalNotifies.filter((n) =>
       (caseId && n.caseId === caseId) || (caseNo && n.caseNo === caseNo)
@@ -2068,30 +2208,51 @@ function App() {
       caseNotifies.forEach((notify) => {
         const hasSent = baseTimeline.some((t) => t.notifyId === notify.id && t.type === 'critical-notify-sent');
         const hasConfirmed = baseTimeline.some((t) => t.notifyId === notify.id && t.type === 'critical-notify-confirmed');
+        const hasEscalated = baseTimeline.some((t) => t.notifyId === notify.id && t.type === 'critical-notify-escalated');
         if (!hasSent) {
           extraEvents.push({
             type: 'critical-notify-sent',
-            event: '通知发送',
+            event: notify.isEscalation ? '升级通知发送' : '通知发送',
             at: formatDateShort(notify.sentAt || notify.createdAt),
             by: '系统',
             changedAt: notify.sentAt || notify.createdAt,
             notifyId: notify.id,
+            parentNotifyId: notify.parentNotifyId,
             notifyTarget: notify.notifyTarget,
             notifyMethod: notify.notifyMethod,
             triggerReason: notify.triggerReason,
+            isEscalation: !!notify.isEscalation,
             sortTime: new Date(notify.sentAt || notify.createdAt).getTime()
+          });
+        }
+        if (notify.isEscalation && !hasEscalated && notify.parentNotifyId) {
+          const sourceNotify = caseNotifies.find((n) => n.id === notify.parentNotifyId);
+          extraEvents.push({
+            type: 'critical-notify-escalated',
+            event: '通知升级',
+            at: formatDateShort(notify.sentAt || notify.createdAt),
+            by: '系统',
+            changedAt: notify.sentAt || notify.createdAt,
+            notifyId: notify.id,
+            parentNotifyId: notify.parentNotifyId,
+            notifyTarget: notify.notifyTarget,
+            notifyMethod: notify.notifyMethod,
+            fromTarget: sourceNotify?.notifyTarget,
+            triggerReason: '通知升级',
+            sortTime: new Date(notify.sentAt || notify.createdAt).getTime() - 1
           });
         }
         if (notify.confirmedAt && !hasConfirmed) {
           extraEvents.push({
             type: 'critical-notify-confirmed',
-            event: '通知确认',
+            event: notify.isEscalation ? '升级通知确认' : '通知确认',
             at: formatDateShort(notify.confirmedAt),
             by: notify.confirmedBy || notify.notifyTarget,
             changedAt: notify.confirmedAt,
             notifyId: notify.id,
             notifyTarget: notify.notifyTarget,
             notifyMethod: notify.notifyMethod,
+            isEscalation: !!notify.isEscalation,
             sortTime: new Date(notify.confirmedAt).getTime()
           });
         }
@@ -4272,6 +4433,103 @@ function App() {
             </article>
           </section>
 
+          {showEscalateModal && (
+            <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeEscalateModal(); }}>
+              <div className="modal-panel">
+                <div className="panel-title">
+                  <ArrowUpCircle size={18} />
+                  <h2>升级通知</h2>
+                  <button className="modal-close" type="button" onClick={closeEscalateModal}>
+                    <X size={18} />
+                  </button>
+                </div>
+                {escalateSourceNotify && (
+                  <div className="escalate-source-info">
+                    <div className="escalate-source-title">
+                      <AlertTriangle size={14} />
+                      原通知信息
+                    </div>
+                    <div className="escalate-source-grid">
+                      <div><span>病例号：</span>{escalateSourceNotify.caseNo}</div>
+                      <div><span>原通知对象：</span>{escalateSourceNotify.notifyTarget}</div>
+                      <div><span>发送时间：</span>{formatDateTime(escalateSourceNotify.sentAt)}</div>
+                      <div><span>已超时：</span>{notifyOverdueMinutes(escalateSourceNotify)}分钟</div>
+                    </div>
+                  </div>
+                )}
+                <form className="escalate-form" onSubmit={handleEscalateSubmit}>
+                  <div className="form-grid">
+                    <label className="wide">
+                      <span><UserPlus size={13} />升级至</span>
+                      <select
+                        value={escalateForm.escalateTarget}
+                        onChange={(e) => {
+                          setEscalateForm({ ...escalateForm, escalateTarget: e.target.value });
+                          setTimeout(checkEscalateDuplicate, 50);
+                        }}
+                      >
+                        {NOTIFY_ESCALATE_TARGETS.map((t) => <option key={t}>{t}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span><Phone size={13} />通知方式</span>
+                      <select
+                        value={escalateForm.notifyMethod}
+                        onChange={(e) => setEscalateForm({ ...escalateForm, notifyMethod: e.target.value })}
+                      >
+                        {CRITICAL_NOTIFY_METHODS.map((m) => <option key={m}>{m}</option>)}
+                      </select>
+                    </label>
+                    <label>
+                      <span><CalendarClock size={13} />发送时间</span>
+                      <input
+                        type="datetime-local"
+                        value={escalateForm.sentAt}
+                        onChange={(e) => setEscalateForm({ ...escalateForm, sentAt: e.target.value })}
+                        required
+                      />
+                    </label>
+                    <label className="wide">
+                      <span><ClipboardList size={13} />升级备注</span>
+                      <textarea
+                        value={escalateForm.remark}
+                        onChange={(e) => setEscalateForm({ ...escalateForm, remark: e.target.value })}
+                        placeholder="请输入升级原因或备注信息"
+                        rows={3}
+                      />
+                    </label>
+                  </div>
+                  {escalateWarning && (
+                    <div className="notify-duplicate-warning">
+                      <AlertTriangle size={16} />
+                      <span>{escalateWarning}</span>
+                    </div>
+                  )}
+                  <div className="form-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={closeEscalateModal}
+                    >
+                      <X size={18} />取消
+                    </button>
+                    <button
+                      className="primary wb-btn-escalate-primary"
+                      type="submit"
+                      disabled={!escalateForm.escalateTarget.trim() || !escalateForm.sentAt || !!escalateWarning}
+                    >
+                      <Send size={18} />确认升级
+                    </button>
+                  </div>
+                  <p className="hint">
+                    通知升级将发送给科室主任或医务科，同一对象{NOTIFY_ESCALATE_WINDOW_MINUTES}分钟内不可重复升级。
+                    升级记录将同步进入病例时间线。
+                  </p>
+                </form>
+              </div>
+            </div>
+          )}
+
           <section className="workspace borrow-workspace">
             <form className="panel form-panel borrow-form-panel" onSubmit={handleNotifySubmit}>
               <div className="panel-title">
@@ -4487,6 +4745,12 @@ function App() {
                           <UserCheck size={13} />确认人：{item.confirmedBy}
                         </div>
                       )}
+                      {item.isEscalation && item.parentNotifyId && (
+                        <div className="notify-escalate-badge">
+                          <ArrowUpCircle size={13} />
+                          升级通知（来自：{criticalNotifies.find(n => n.id === item.parentNotifyId)?.notifyTarget || '原通知'}）
+                        </div>
+                      )}
                       <div className="borrow-card-actions" onClick={(e) => e.stopPropagation()}>
                         {status === CRITICAL_NOTIFY_STATUS.PENDING && (
                           <button
@@ -4495,6 +4759,15 @@ function App() {
                             onClick={() => confirmNotify(item)}
                           >
                             <CheckCircle2 size={13} />确认收到
+                          </button>
+                        )}
+                        {canEscalateNotify(item) && !item.isEscalation && (
+                          <button
+                            className="wb-btn wb-btn-escalate"
+                            type="button"
+                            onClick={() => openEscalateModal(item)}
+                          >
+                            <ArrowUpCircle size={13} />升级通知
                           </button>
                         )}
                         <button
@@ -4574,6 +4847,67 @@ function App() {
                       <span className="borrow-detail-label">处理备注</span>
                       <span className="borrow-detail-value">{selectedNotifyForDetail.remark}</span>
                     </div>
+                  )}
+                  {selectedNotifyForDetail.isEscalation && selectedNotifyForDetail.parentNotifyId && (() => {
+                    const parentNotify = criticalNotifies.find(n => n.id === selectedNotifyForDetail.parentNotifyId);
+                    return (
+                      <div className="borrow-detail-item wide">
+                        <span className="borrow-detail-label">升级来源</span>
+                        <span className="borrow-detail-value escalate-info">
+                          <ArrowUpCircle size={14} />
+                          由通知升级而来（原对象：{parentNotify?.notifyTarget || '未知'}）
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  {(() => {
+                    const escalations = getNotifyEscalations(selectedNotifyForDetail.id, criticalNotifies);
+                    if (escalations.length === 0) return null;
+                    return (
+                      <div className="borrow-detail-item wide">
+                        <span className="borrow-detail-label">升级记录</span>
+                        <div className="escalation-list">
+                          {escalations.map((esc) => {
+                            const escStatus = calcNotifyStatus(esc);
+                            return (
+                              <div key={esc.id} className={`escalation-item escalation-${notifyStatusClass(escStatus)}`}>
+                                <div className="escalation-head">
+                                  <ArrowUpCircle size={12} />
+                                  <span>升级至「{esc.notifyTarget}」</span>
+                                  <span className={`notify-badge ${notifyStatusClass(escStatus)}`}>{escStatus}</span>
+                                </div>
+                                <div className="escalation-times">
+                                  <span>发送：{formatDateTime(esc.sentAt)}</span>
+                                  {esc.confirmedAt && <span>确认：{formatDateTime(esc.confirmedAt)}</span>}
+                                  <span>方式：{esc.notifyMethod}</span>
+                                </div>
+                                {esc.remark && <div className="escalation-remark">{esc.remark}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="detail-actions" style={{ padding: '12px 16px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '8px' }}>
+                  {calcNotifyStatus(selectedNotifyForDetail) === CRITICAL_NOTIFY_STATUS.PENDING && (
+                    <button
+                      className="wb-btn wb-btn-return"
+                      type="button"
+                      onClick={() => confirmNotify(selectedNotifyForDetail)}
+                    >
+                      <CheckCircle2 size={14} />确认收到
+                    </button>
+                  )}
+                  {canEscalateNotify(selectedNotifyForDetail) && !selectedNotifyForDetail.isEscalation && (
+                    <button
+                      className="wb-btn wb-btn-escalate"
+                      type="button"
+                      onClick={() => openEscalateModal(selectedNotifyForDetail)}
+                    >
+                      <ArrowUpCircle size={14} />升级通知
+                    </button>
                   )}
                 </div>
               </div>
@@ -4656,6 +4990,7 @@ function App() {
                         const isDispatch = step.status === '派单';
                         const isNotifySent = step.type === 'critical-notify-sent';
                         const isNotifyConfirmed = step.type === 'critical-notify-confirmed';
+                        const isNotifyEscalated = step.type === 'critical-notify-escalated';
                         const isCaseNote = step.type === 'case-note';
                         const hasNote = step.note && !isCaseNote;
 
@@ -4681,6 +5016,9 @@ function App() {
                         if (isNotifyConfirmed && step.notifyTarget) {
                           displayText += `（${step.notifyMethod}→${step.notifyTarget}）`;
                         }
+                        if (isNotifyEscalated && step.notifyTarget) {
+                          displayText += `（${step.fromTarget || '原通知对象'} → ${step.notifyTarget}/${step.notifyMethod}）`;
+                        }
 
                         displayText += ` · ${step.by}`;
 
@@ -4696,6 +5034,7 @@ function App() {
                               ${isSlideOverdue ? 'timeline-slide-overdue' : ''}
                               ${isNotifySent ? 'timeline-notify-sent' : ''}
                               ${isNotifyConfirmed ? 'timeline-notify-confirmed' : ''}
+                              ${isNotifyEscalated ? 'timeline-notify-escalated' : ''}
                               ${isCaseNote ? 'timeline-case-note' : ''}
                               ${hasNote ? 'timeline-has-note' : ''}
                             `}
