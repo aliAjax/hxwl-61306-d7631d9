@@ -348,17 +348,41 @@ function sanitizeBusinessRules(rawRules, defaultRules, fields, statuses) {
   };
 }
 
-export function migrateLegacyRecords(records, config) {
+export function getFieldKeyRenames(oldConfig, newConfig) {
+  const oldFields = ensureArray(oldConfig?.fields, []);
+  const newFields = ensureArray(newConfig?.fields, []);
+  const oldFieldIdMap = new Map(oldFields.map((field) => [field.id, field]));
+
+  return newFields
+    .map((field) => {
+      const oldField = oldFieldIdMap.get(field.id);
+      if (!oldField || oldField.key === field.key) return null;
+      return { oldKey: oldField.key, newKey: field.key };
+    })
+    .filter(Boolean);
+}
+
+export function migrateLegacyRecords(records, config, options = {}) {
   if (!Array.isArray(records)) return [];
 
   const fieldKeys = new Set(config.fields.map((f) => f.key));
   const statusNames = new Set(config.statuses.map((s) => s.name));
   const primaryStatus = config.statuses.find((s) => s.primary)?.name || config.statuses[0]?.name || '';
+  const fieldKeyRenames = ensureArray(options.fieldKeyRenames, []);
 
   return records.map((record) => {
     if (!record || typeof record !== 'object') return null;
 
     const migrated = { ...record };
+
+    fieldKeyRenames.forEach(({ oldKey, newKey }) => {
+      if (!oldKey || !newKey) return;
+      if (!Object.prototype.hasOwnProperty.call(migrated, oldKey)) return;
+      if (!fieldKeys.has(newKey)) return;
+      if (!Object.prototype.hasOwnProperty.call(migrated, newKey) || migrated[newKey] === '') {
+        migrated[newKey] = migrated[oldKey];
+      }
+    });
 
     if (!migrated.id) {
       migrated.id = uid();
@@ -628,7 +652,6 @@ export function diffConfig(oldConfig, newConfig) {
   const oldFields = ensureArray(oldConfig.fields, []);
   const newFields = ensureArray(newConfig.fields, []);
   const oldFieldIdMap = new Map(oldFields.map((f) => [f.id, f]));
-  const newFieldIdMap = new Map(newFields.map((f) => [f.id, f]));
   const oldFieldIds = new Set(oldFields.map((f) => f.id));
   const newFieldIds = new Set(newFields.map((f) => f.id));
 

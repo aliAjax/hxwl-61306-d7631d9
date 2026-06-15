@@ -6,6 +6,7 @@ import {
   loadConfig,
   persistConfig,
   migrateLegacyRecords,
+  getFieldKeyRenames,
   sanitizeConfig,
   evaluateMetric,
   getStatusNames,
@@ -972,9 +973,10 @@ function App() {
 
   function handleConfigSave(newConfig) {
     const sanitized = sanitizeConfig(newConfig);
+    const fieldKeyRenames = getFieldKeyRenames(queueConfig, sanitized);
     setQueueConfig(sanitized);
     setFilters(buildInitialFiltersState(sanitized));
-    const migratedRecords = migrateLegacyRecords(records, sanitized);
+    const migratedRecords = migrateLegacyRecords(records, sanitized, { fieldKeyRenames });
     if (migratedRecords.length !== records.length || JSON.stringify(migratedRecords) !== JSON.stringify(records)) {
       setRecords(migratedRecords);
       if (tabSyncRef.current) {
